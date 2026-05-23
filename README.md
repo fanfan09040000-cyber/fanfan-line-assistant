@@ -26,6 +26,11 @@ OPENAI_API_KEY=
 OPENAI_MODEL=gpt-5.1-mini
 ASSISTANT_OWNER_NAME=凡凡
 PORT=3000
+TRELLO_API_KEY=
+TRELLO_TOKEN=
+TRELLO_BOARD_ID=
+TRELLO_DEFAULT_LIST_ID=
+TRELLO_DEFAULT_LABEL_IDS=
 ```
 
 ## LINE 設定
@@ -70,3 +75,34 @@ ASSISTANT_OWNER_NAME
 ```
 
 如果回傳功能列表，就代表 webhook 已經接通。
+
+## Trello
+
+Trello API 需要 `API key` 和 `token`。官方說明：
+
+- https://support.atlassian.com/trello/docs/getting-started-with-trello-rest-api/
+- https://developer.atlassian.com/cloud/trello/guides/rest-api/api-introduction/
+
+### 取得清單 ID
+
+Railway 設定好 `TRELLO_API_KEY`、`TRELLO_TOKEN`、`TRELLO_BOARD_ID` 後，在 LINE 傳：
+
+```text
+Trello lists
+```
+
+助理會回傳看板裡每個清單的 ID。把妳想預設新增卡片的清單 ID 放進：
+
+```text
+TRELLO_DEFAULT_LIST_ID
+```
+
+### 建立合作卡片
+
+在 LINE 傳：
+
+```text
+合作：品牌名稱 / 產品名稱 / 2026-06-01 / Reels 1 支，限動 3 則
+```
+
+助理會在預設 Trello 清單建立一張卡片。
