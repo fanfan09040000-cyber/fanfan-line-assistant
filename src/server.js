@@ -375,7 +375,7 @@ function formatReminder(label, cards) {
 
   cards.forEach((card, index) => {
     const labels = card.labels?.map((item) => item.name).filter(Boolean).join("、");
-    lines.push(`${index + 1}. ${card.name}`);
+    lines.push(`${index + 1}. 任務主題：${card.name}`);
     lines.push(`清單：${card.listName}`);
     lines.push(`到期：${formatTaipeiDateTime(card.due || card.inferredDue)}`);
     if (!card.due && card.inferredDueSource) {
