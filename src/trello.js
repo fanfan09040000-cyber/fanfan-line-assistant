@@ -105,6 +105,32 @@ export async function getDueCards({ start, end, boardId = process.env.TRELLO_BOA
     .sort((a, b) => new Date(a.due).getTime() - new Date(b.due).getTime());
 }
 
+export async function getOpenCards(boardId = process.env.TRELLO_BOARD_ID) {
+  if (!process.env.TRELLO_API_KEY || !process.env.TRELLO_TOKEN || !boardId) {
+    throw new Error("Missing TRELLO_API_KEY, TRELLO_TOKEN, or TRELLO_BOARD_ID");
+  }
+
+  const params = new URLSearchParams({
+    key: process.env.TRELLO_API_KEY,
+    token: process.env.TRELLO_TOKEN,
+    fields: "name,due,dueComplete,url,idList,labels,dateLastActivity",
+    filter: "open",
+  });
+
+  const response = await fetch(`${TRELLO_API_BASE_URL}/boards/${boardId}/cards?${params}`, {
+    headers: {
+      Accept: "application/json",
+    },
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Trello get open cards failed: ${response.status} ${errorText}`);
+  }
+
+  return response.json();
+}
+
 export async function getCardComments(cardId, limit = 3) {
   if (!process.env.TRELLO_API_KEY || !process.env.TRELLO_TOKEN || !cardId) {
     throw new Error("Missing TRELLO_API_KEY, TRELLO_TOKEN, or cardId");
