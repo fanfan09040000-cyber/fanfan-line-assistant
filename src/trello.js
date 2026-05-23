@@ -157,6 +157,32 @@ export async function getCardComments(cardId, limit = 3) {
   return response.json();
 }
 
+export async function getBoardComments(boardId = process.env.TRELLO_BOARD_ID, limit = 1000) {
+  if (!process.env.TRELLO_API_KEY || !process.env.TRELLO_TOKEN || !boardId) {
+    throw new Error("Missing TRELLO_API_KEY, TRELLO_TOKEN, or TRELLO_BOARD_ID");
+  }
+
+  const params = new URLSearchParams({
+    key: process.env.TRELLO_API_KEY,
+    token: process.env.TRELLO_TOKEN,
+    filter: "commentCard",
+    limit: String(limit),
+  });
+
+  const response = await fetch(`${TRELLO_API_BASE_URL}/boards/${boardId}/actions?${params}`, {
+    headers: {
+      Accept: "application/json",
+    },
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Trello get board comments failed: ${response.status} ${errorText}`);
+  }
+
+  return response.json();
+}
+
 function requireTrelloEnv(idList) {
   const missing = [
     ["TRELLO_API_KEY", process.env.TRELLO_API_KEY],
