@@ -2,7 +2,13 @@ import "dotenv/config";
 import express from "express";
 import { Client, middleware } from "@line/bot-sdk";
 import OpenAI from "openai";
-import { createTrelloCard, getBoardLists, isTrelloConfigured } from "./trello.js";
+import {
+  createTrelloCard,
+  getBoardLists,
+  getCardComments,
+  getDueCards,
+  isTrelloConfigured,
+} from "./trello.js";
 
 const {
   LINE_CHANNEL_ACCESS_TOKEN,
@@ -72,6 +78,18 @@ async function handleEvent(event) {
     return;
   }
 
+  if (isTodayReminderMessage(userText)) {
+    const reply = await handleTrelloReminder("today");
+    await replyText(event.replyToken, reply);
+    return;
+  }
+
+  if (isWeekReminderMessage(userText)) {
+    const reply = await handleTrelloReminder("week");
+    await replyText(event.replyToken, reply);
+    return;
+  }
+
   if (isTrelloCardMessage(userText)) {
     const reply = await handleTrelloCard(userText);
     await replyText(event.replyToken, reply);
@@ -136,6 +154,8 @@ function buildHelpMessage() {
     "",
     "合作：品牌 / 產品 / 截止日 / 備註",
     "Trello lists：列出看板清單 ID",
+    "今天任務：看今天要完成的 Trello 卡片",
+    "本週任務：看本週要完成的 Trello 卡片",
     "待辦：明天整理品牌報價",
     "提醒：下週三 14:00 回覆合作信",
     "brief：貼上品牌資料，我幫妳整理腳本方向",
@@ -150,6 +170,14 @@ function isTrelloListMessage(text) {
 
 function isTrelloCardMessage(text) {
   return text.startsWith("合作：") || text.startsWith("合作:");
+}
+
+function isTodayReminderMessage(text) {
+  return ["今天任務", "今日任務", "今天提醒", "今日提醒", "今天摘要"].includes(text);
+}
+
+function isWeekReminderMessage(text) {
+  return ["本週任務", "這週任務", "本周任務", "本週提醒", "這週提醒"].includes(text);
 }
 
 async function handleTrelloLists() {
@@ -187,6 +215,36 @@ async function handleTrelloCard(text) {
   } catch (error) {
     console.error(error);
     return "我剛剛建立 Trello 卡片失敗，可能是 list ID、API token 權限，或 Trello 連線有問題。";
+  }
+}
+
+async function handleTrelloReminder(range) {
+  if (!isTrelloConfigured() || !process.env.TRELLO_BOARD_ID) {
+    return "Trello 還沒設定好。需要先在 Railway 加 TRELLO_API_KEY、TRELLO_TOKEN、TRELLO_BOARD_ID。";
+  }
+
+  try {
+    const lists = await getBoardLists();
+    const listNameById = new Map(lists.map((list) => [list.id, list.name]));
+    const { start, end, label } = getReminderRange(range);
+    const cards = await getDueCards({ start, end });
+
+    if (cards.length === 0) {
+      return `${label}目前沒有到期的 Trello 任務。`;
+    }
+
+    const cardsWithComments = await Promise.all(
+      cards.map(async (card) => ({
+        ...card,
+        listName: listNameById.get(card.idList) || "未分類",
+        comments: await getCardComments(card.id, 2),
+      }))
+    );
+
+    return formatReminder(label, cardsWithComments);
+  } catch (error) {
+    console.error(error);
+    return "我剛剛讀 Trello 任務失敗，可能是 Trello 權限、Board ID，或 API token 有問題。";
   }
 }
 
@@ -232,6 +290,91 @@ function parseDueDate(text) {
     0,
     0
   ).toISOString();
+}
+
+function getReminderRange(range) {
+  const today = getTaipeiToday();
+
+  if (range === "today") {
+    return {
+      label: "今天",
+      start: taipeiDateToUtc(today.year, today.month, today.day),
+      end: taipeiDateToUtc(today.year, today.month, today.day + 1),
+    };
+  }
+
+  const dayOfWeek = new Date(Date.UTC(today.year, today.month - 1, today.day, 12)).getUTCDay();
+  const mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+
+  return {
+    label: "本週",
+    start: taipeiDateToUtc(today.year, today.month, today.day + mondayOffset),
+    end: taipeiDateToUtc(today.year, today.month, today.day + mondayOffset + 7),
+  };
+}
+
+function getTaipeiToday() {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Taipei",
+    year: "numeric",
+    month: "numeric",
+    day: "numeric",
+  }).formatToParts(new Date());
+
+  return {
+    year: Number(parts.find((part) => part.type === "year").value),
+    month: Number(parts.find((part) => part.type === "month").value),
+    day: Number(parts.find((part) => part.type === "day").value),
+  };
+}
+
+function taipeiDateToUtc(year, month, day) {
+  return new Date(Date.UTC(year, month - 1, day, -8, 0, 0));
+}
+
+function formatReminder(label, cards) {
+  const lines = [`${label} Trello 任務`, ""];
+
+  cards.forEach((card, index) => {
+    const labels = card.labels?.map((item) => item.name).filter(Boolean).join("、");
+    lines.push(`${index + 1}. ${card.name}`);
+    lines.push(`清單：${card.listName}`);
+    lines.push(`到期：${formatTaipeiDateTime(card.due)}`);
+    if (labels) lines.push(`標籤：${labels}`);
+
+    const comments = formatLatestComments(card.comments);
+    if (comments.length > 0) {
+      lines.push("最新留言：");
+      comments.forEach((comment) => lines.push(comment));
+    }
+
+    lines.push(card.url);
+    lines.push("");
+  });
+
+  return lines.join("\n").trim();
+}
+
+function formatLatestComments(comments = []) {
+  return comments
+    .map((comment) => {
+      const author = comment.memberCreator?.fullName || comment.memberCreator?.username || "Trello";
+      const text = comment.data?.text?.replace(/\s+/g, " ").trim();
+      if (!text) return "";
+      return `- ${author}：${text.slice(0, 120)}`;
+    })
+    .filter(Boolean);
+}
+
+function formatTaipeiDateTime(dateText) {
+  return new Intl.DateTimeFormat("zh-TW", {
+    timeZone: "Asia/Taipei",
+    month: "numeric",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(new Date(dateText));
 }
 
 async function replyText(replyToken, text) {
