@@ -31,7 +31,7 @@ const lineConfig = {
 
 const app = express();
 const lineClient = new Client(lineConfig);
-const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
+const openai = OPENAI_API_KEY ? new OpenAI({ apiKey: OPENAI_API_KEY }) : null;
 
 app.get("/", (_req, res) => {
   res.status(200).send("LINE AI assistant is running.");
@@ -70,6 +70,10 @@ async function handleEvent(event) {
 }
 
 async function askAssistant(userText) {
+  if (!openai) {
+    return "OpenAI API key 還沒設定好，所以我目前只能收到訊息，還不能產生 AI 回覆。";
+  }
+
   const response = await openai.responses.create({
     model: OPENAI_MODEL,
     input: [
