@@ -7,6 +7,7 @@ import {
   getBoardLists,
   getCardComments,
   getDueCards,
+  getOpenCards,
   isTrelloConfigured,
 } from "./trello.js";
 
@@ -227,18 +228,22 @@ async function handleTrelloReminder(range) {
     const lists = await getBoardLists();
     const listNameById = new Map(lists.map((list) => [list.id, list.name]));
     const { start, end, label } = getReminderRange(range);
-    const cards = await getDueCards({ start, end });
+    const cards = await getReminderCards({ start, end });
 
     if (cards.length === 0) {
       return `${label}目前沒有到期的 Trello 任務。`;
     }
 
     const cardsWithComments = await Promise.all(
-      cards.map(async (card) => ({
-        ...card,
-        listName: listNameById.get(card.idList) || "未分類",
-        comments: await getCardComments(card.id, 2),
-      }))
+      cards.map(async (card) => {
+        const comments = card.comments || (await getCardComments(card.id, 2));
+
+        return {
+          ...card,
+          listName: listNameById.get(card.idList) || "未分類",
+          comments,
+        };
+      })
     );
 
     return formatReminder(label, cardsWithComments);
@@ -246,6 +251,39 @@ async function handleTrelloReminder(range) {
     console.error(error);
     return "我剛剛讀 Trello 任務失敗，可能是 Trello 權限、Board ID，或 API token 有問題。";
   }
+}
+
+async function getReminderCards({ start, end }) {
+  const dueCards = await getDueCards({ start, end });
+  const dueCardIds = new Set(dueCards.map((card) => card.id));
+  const openCards = await getOpenCards();
+  const commentMatchedCards = [];
+
+  for (const card of openCards) {
+    if (dueCardIds.has(card.id)) continue;
+
+    const comments = await getCardComments(card.id, 5);
+    const matchedComment = comments.find((comment) => {
+      const taskDate = parseTaskDateFromComment(comment);
+      if (!taskDate) return false;
+      return taskDate.getTime() >= start.getTime() && taskDate.getTime() < end.getTime();
+    });
+
+    if (matchedComment) {
+      commentMatchedCards.push({
+        ...card,
+        inferredDue: parseTaskDateFromComment(matchedComment),
+        inferredDueSource: matchedComment.data?.text || "",
+        comments,
+      });
+    }
+  }
+
+  return [...dueCards, ...commentMatchedCards].sort((a, b) => {
+    const aDue = new Date(a.due || a.inferredDue).getTime();
+    const bDue = new Date(b.due || b.inferredDue).getTime();
+    return aDue - bDue;
+  });
 }
 
 function parseCollaborationCard(text) {
@@ -339,7 +377,10 @@ function formatReminder(label, cards) {
     const labels = card.labels?.map((item) => item.name).filter(Boolean).join("、");
     lines.push(`${index + 1}. ${card.name}`);
     lines.push(`清單：${card.listName}`);
-    lines.push(`到期：${formatTaipeiDateTime(card.due)}`);
+    lines.push(`到期：${formatTaipeiDateTime(card.due || card.inferredDue)}`);
+    if (!card.due && card.inferredDueSource) {
+      lines.push(`依留言判斷：${card.inferredDueSource.replace(/\s+/g, " ").trim().slice(0, 120)}`);
+    }
     if (labels) lines.push(`標籤：${labels}`);
 
     const comments = formatLatestComments(card.comments);
@@ -353,6 +394,104 @@ function formatReminder(label, cards) {
   });
 
   return lines.join("\n").trim();
+}
+
+function parseTaskDateFromComment(comment) {
+  const text = comment.data?.text || "";
+  if (!text.trim()) return undefined;
+
+  const baseDate = comment.date ? new Date(comment.date) : new Date();
+  return parseTaskDate(text, baseDate);
+}
+
+function parseTaskDate(text, baseDate = new Date()) {
+  const normalized = text.replace(/\s+/g, "");
+  const base = getTaipeiDateParts(baseDate);
+
+  const explicitDate = parseExplicitDate(normalized, base.year);
+  if (explicitDate) return explicitDate;
+
+  const relativeDay = parseRelativeDay(normalized, base);
+  if (relativeDay) return relativeDay;
+
+  const weekday = parseRelativeWeekday(normalized, base);
+  if (weekday) return weekday;
+
+  return undefined;
+}
+
+function parseExplicitDate(text, defaultYear) {
+  const yearMonthDay = text.match(/(\d{4})年(\d{1,2})月(\d{1,2})[日號]?/);
+  if (yearMonthDay) {
+    return taipeiDateToUtc(
+      Number(yearMonthDay[1]),
+      Number(yearMonthDay[2]),
+      Number(yearMonthDay[3])
+    );
+  }
+
+  const monthDay = text.match(/(\d{1,2})[月/](\d{1,2})[日號]?/);
+  if (monthDay) {
+    return taipeiDateToUtc(defaultYear, Number(monthDay[1]), Number(monthDay[2]));
+  }
+
+  return undefined;
+}
+
+function parseRelativeDay(text, base) {
+  const offsets = [
+    ["大後天", 3],
+    ["後天", 2],
+    ["明天", 1],
+    ["今天", 0],
+    ["今日", 0],
+  ];
+
+  const matched = offsets.find(([keyword]) => text.includes(keyword));
+  if (!matched) return undefined;
+
+  return taipeiDateToUtc(base.year, base.month, base.day + matched[1]);
+}
+
+function parseRelativeWeekday(text, base) {
+  const match = text.match(/(這週|本週|這禮拜|本禮拜|這星期|本星期|下週|下禮拜|下星期)([一二三四五六日天])/);
+  if (!match) return undefined;
+
+  const weekOffset = match[1].startsWith("下") ? 7 : 0;
+  const targetWeekday = weekdayNumber(match[2]);
+  const baseWeekday = new Date(Date.UTC(base.year, base.month - 1, base.day, 12)).getUTCDay();
+  const normalizedBaseWeekday = baseWeekday === 0 ? 7 : baseWeekday;
+  const dayOffset = weekOffset + targetWeekday - normalizedBaseWeekday;
+
+  return taipeiDateToUtc(base.year, base.month, base.day + dayOffset);
+}
+
+function weekdayNumber(text) {
+  return {
+    一: 1,
+    二: 2,
+    三: 3,
+    四: 4,
+    五: 5,
+    六: 6,
+    日: 7,
+    天: 7,
+  }[text];
+}
+
+function getTaipeiDateParts(date) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Taipei",
+    year: "numeric",
+    month: "numeric",
+    day: "numeric",
+  }).formatToParts(date);
+
+  return {
+    year: Number(parts.find((part) => part.type === "year").value),
+    month: Number(parts.find((part) => part.type === "month").value),
+    day: Number(parts.find((part) => part.type === "day").value),
+  };
 }
 
 function formatLatestComments(comments = []) {
