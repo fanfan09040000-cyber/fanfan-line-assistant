@@ -1,0 +1,13 @@
+name: Daily LINE Summary
+
+on:
+  schedule:
+    - cron: "0 1 * * *"
+  workflow_dispatch:
+
+jobs:
+  push-summary:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Push daily LINE summary
+        run: curl -fsS "https://fanfan-line-assistant-production.up.railway.app/push/daily?secret=${{ secrets.CRON_SECRET }}"
