@@ -3,6 +3,7 @@ import express from "express";
 import { Client, middleware } from "@line/bot-sdk";
 import OpenAI from "openai";
 import {
+  getBoardComments,
   createTrelloCard,
   getBoardLists,
   getCardComments,
@@ -18,6 +19,8 @@ const {
   OPENAI_MODEL = "gpt-5.1-mini",
   ASSISTANT_OWNER_NAME = "凡凡",
   PORT = 3000,
+  LINE_TARGET_USER_ID,
+  CRON_SECRET,
 } = process.env;
 
 const missingEnv = [
@@ -49,6 +52,27 @@ app.get("/health", (_req, res) => {
   res.status(200).json({ ok: true });
 });
 
+app.get("/push/daily", async (req, res) => {
+  if (!CRON_SECRET || req.query.secret !== CRON_SECRET) {
+    res.status(401).json({ ok: false });
+    return;
+  }
+
+  if (!LINE_TARGET_USER_ID) {
+    res.status(400).json({ ok: false, error: "Missing LINE_TARGET_USER_ID" });
+    return;
+  }
+
+  try {
+    const message = await buildDailySummaryFlex();
+    await lineClient.pushMessage(LINE_TARGET_USER_ID, message);
+    res.status(200).json({ ok: true });
+  } catch (error) {
+    console.error("Daily push failed:", error);
+    res.status(500).json({ ok: false });
+  }
+});
+
 app.post("/webhook", middleware(lineConfig), async (req, res) => {
   res.status(200).end();
 
@@ -67,9 +91,18 @@ async function handleEvent(event) {
   }
 
   const userText = event.message.text.trim();
+  console.log("LINE event source:", event.source);
 
   if (isHelpMessage(userText)) {
     await replyText(event.replyToken, buildHelpMessage());
+    return;
+  }
+
+  if (isBindReminderMessage(userText)) {
+    await replyText(event.replyToken, [
+      "這是妳的 LINE userId，之後要做每天 9 點主動推播會用到：",
+      event.source?.userId || "這個來源沒有 userId，請用一對一聊天傳送。",
+    ].join("\n"));
     return;
   }
 
@@ -93,6 +126,17 @@ async function handleEvent(event) {
 
   if (isNextWeekReminderMessage(userText)) {
     const reply = await handleTrelloReminder("nextWeek");
+    await replyMessage(event.replyToken, reply);
+    return;
+  }
+
+  if (isNextWeekCalendarMessage(userText)) {
+    await replyMessage(event.replyToken, buildCalendarPlaceholderFlex("下週"));
+    return;
+  }
+
+  if (isDailySummaryMessage(userText)) {
+    const reply = await buildDailySummaryFlex();
     await replyMessage(event.replyToken, reply);
     return;
   }
@@ -164,6 +208,9 @@ function buildHelpMessage() {
     "今天任務：看今天要完成的 Trello 卡片",
     "本週任務：看本週要完成的 Trello 卡片",
     "下週任務：看下週要完成的 Trello 卡片",
+    "下週行程：看下週 Google 行事曆（待串接）",
+    "今日總結：三張卡片總結今日行程、今日任務、本週任務",
+    "綁定提醒：取得每天 9 點推播需要的 LINE userId",
     "待辦：明天整理品牌報價",
     "提醒：下週三 14:00 回覆合作信",
     "brief：貼上品牌資料，我幫妳整理腳本方向",
@@ -190,6 +237,18 @@ function isWeekReminderMessage(text) {
 
 function isNextWeekReminderMessage(text) {
   return ["下週任務", "下周任務", "下禮拜任務", "下星期任務", "下週提醒", "下禮拜提醒"].includes(text);
+}
+
+function isNextWeekCalendarMessage(text) {
+  return ["下週行程", "下周行程", "下禮拜行程", "下星期行程"].includes(text);
+}
+
+function isDailySummaryMessage(text) {
+  return ["今日總結", "今天總結", "每日總結", "早安摘要", "今天摘要"].includes(text);
+}
+
+function isBindReminderMessage(text) {
+  return ["綁定提醒", "綁定推播", "我的LINEID", "我的 LINE ID"].includes(text);
 }
 
 async function handleTrelloLists() {
@@ -239,7 +298,11 @@ async function handleTrelloReminder(range) {
     const lists = await getBoardLists();
     const listNameById = new Map(lists.map((list) => [list.id, list.name]));
     const { start, end, label } = getReminderRange(range);
-    const cards = await getReminderCards({ start, end });
+    const cards = await getReminderCards({
+      start,
+      end,
+      includeUndatedActions: range !== "today",
+    });
 
     if (cards.length === 0) {
       return `${label}目前沒有到期的 Trello 任務。`;
@@ -257,77 +320,66 @@ async function handleTrelloReminder(range) {
       })
     );
 
-    return buildReminderFlex(label, cardsWithComments);
+    return buildTaskSummaryFlex(label, cardsWithComments);
   } catch (error) {
     console.error(error);
     return "我剛剛讀 Trello 任務失敗，可能是 Trello 權限、Board ID，或 API token 有問題。";
   }
 }
 
-function buildReminderFlex(label, cards) {
-  const displayCards = cards.slice(0, 10);
-  const extraCount = cards.length - displayCards.length;
+async function buildDailySummaryFlex() {
+  const todayRange = getReminderRange("today");
+  const weekRange = getReminderRange("week");
+  const [todayCards, weekCards] = await Promise.all([
+    buildReminderCardsForRange(todayRange),
+    buildReminderCardsForRange(weekRange),
+  ]);
 
   return {
     type: "flex",
-    altText: `${label} Trello 任務：${cards.length} 件`,
+    altText: "今日總結：行程、今日任務、本週任務",
     contents: {
       type: "carousel",
       contents: [
-        buildSummaryBubble(label, cards.length, extraCount),
-        ...displayCards.map((card, index) => buildTaskBubble(card, index)),
+        buildCalendarPlaceholderBubble("今日行程"),
+        buildTaskSummaryBubble("今天任務", todayCards),
+        buildTaskSummaryBubble("本週任務", weekCards),
       ],
     },
   };
 }
 
-function buildSummaryBubble(label, count, extraCount) {
-  const extraText = extraCount > 0 ? `另有 ${extraCount} 件未顯示，請打開 Trello 查看。` : "左右滑可以看每一張任務卡。";
+async function buildReminderCardsForRange(rangeInfo) {
+  const lists = await getBoardLists();
+  const listNameById = new Map(lists.map((list) => [list.id, list.name]));
+  const cards = await getReminderCards({
+    start: rangeInfo.start,
+    end: rangeInfo.end,
+    includeUndatedActions: rangeInfo.label !== "今天",
+  });
 
+  return Promise.all(
+    cards.map(async (card) => {
+      const comments = card.comments || (await getCardComments(card.id, 2));
+
+      return {
+        ...card,
+        listName: listNameById.get(card.idList) || "未分類",
+        comments,
+      };
+    })
+  );
+}
+
+function buildTaskSummaryFlex(label, cards) {
   return {
-    type: "bubble",
-    size: "mega",
-    body: {
-      type: "box",
-      layout: "vertical",
-      paddingAll: "20px",
-      backgroundColor: "#101820",
-      contents: [
-        {
-          type: "text",
-          text: `${label}任務圖卡`,
-          color: "#F7F1E5",
-          size: "xl",
-          weight: "bold",
-        },
-        {
-          type: "text",
-          text: `${count} 件需要留意`,
-          color: "#F2C14E",
-          size: "md",
-          weight: "bold",
-          margin: "lg",
-        },
-        {
-          type: "text",
-          text: extraText,
-          color: "#C9D1D9",
-          size: "sm",
-          wrap: true,
-          margin: "md",
-        },
-      ],
-    },
+    type: "flex",
+    altText: `${label} Trello 任務：${cards.length} 件`,
+    contents: buildTaskSummaryBubble(`${label}任務`, cards),
   };
 }
 
-function buildTaskBubble(card, index) {
-  const labels = card.labels?.map((item) => item.name).filter(Boolean).join("、");
-  const latestComment = formatLatestComments(card.comments)[0]?.replace(/^- /, "") || "沒有最新留言";
-  const inferredText = !card.due && card.inferredDueSource
-    ? `依留言判斷：${card.inferredDueSource.replace(/\s+/g, " ").trim()}`
-    : "";
-
+function buildTaskSummaryBubble(title, cards) {
   return {
     type: "bubble",
     size: "mega",
@@ -339,14 +391,13 @@ function buildTaskBubble(card, index) {
       contents: [
         {
           type: "text",
-          text: `#${index + 1} Trello 任務`,
+          text: "fanfan Trello",
           color: "#A3A3A3",
           size: "xs",
-          weight: "bold",
         },
         {
           type: "text",
-          text: truncate(card.name, 70),
+          text: title,
           color: "#FFFFFF",
           size: "xl",
           weight: "bold",
@@ -355,7 +406,7 @@ function buildTaskBubble(card, index) {
         },
         {
           type: "text",
-          text: `到期 ${formatTaipeiDateTime(card.due || card.inferredDue)}`,
+          text: `${formatTaipeiFullDate(new Date())} 更新`,
           color: "#A3A3A3",
           size: "sm",
           margin: "sm",
@@ -365,67 +416,185 @@ function buildTaskBubble(card, index) {
     body: {
       type: "box",
       layout: "vertical",
-      paddingAll: "18px",
+      paddingAll: "20px",
       backgroundColor: "#FFFDF7",
-      contents: [
-        buildInfoBox("清單", card.listName, "#F7F1E5", "#A16207"),
-        buildInfoBox("到期", formatTaipeiDateTime(card.due || card.inferredDue), "#EEF2FF", "#4338CA"),
-        labels ? buildInfoLine("標籤", labels) : undefined,
-        inferredText
+      contents: (cards.length === 0 ? [
+        {
+          type: "text",
+          text: "目前沒有抓到需要完成的任務。",
+          color: "#6B7280",
+          size: "sm",
+          wrap: true,
+        },
+      ] : [
+        {
+          type: "box",
+          layout: "horizontal",
+          spacing: "sm",
+          contents: [
+            buildMiniMetric("任務", `${cards.length} 件`, "#F7F1E5", "#A16207"),
+            buildMiniMetric("來源", "Trello", "#EEF2FF", "#4338CA"),
+          ],
+        },
+        ...cards.slice(0, 6).flatMap((card, index) => buildTaskSummaryRows(card, index)),
+        cards.length > 6
           ? {
               type: "text",
-              text: truncate(inferredText, 110),
-              color: "#B45309",
+              text: `另有 ${cards.length - 6} 件未顯示，請打開 Trello 查看。`,
+              color: "#6B7280",
               size: "xs",
               wrap: true,
               margin: "md",
             }
           : undefined,
-        {
-          type: "box",
-          layout: "vertical",
-          backgroundColor: "#F3F4F6",
-          cornerRadius: "8px",
-          paddingAll: "10px",
-          margin: "md",
-          contents: [
-            {
-              type: "text",
-              text: "最新留言",
-              color: "#6B7280",
-              size: "xs",
-              weight: "bold",
-            },
-            {
-              type: "text",
-              text: truncate(latestComment, 150),
-              color: "#111827",
-              size: "sm",
-              wrap: true,
-              margin: "xs",
-            },
-          ],
-        },
-      ].filter(Boolean),
+      ]).filter(Boolean),
     },
-    footer: {
+  };
+}
+
+function buildCalendarPlaceholderFlex(label) {
+  return {
+    type: "flex",
+    altText: `${label}行程：Google Calendar 尚未串接到 Railway`,
+    contents: buildCalendarPlaceholderBubble(`${label}行程`),
+  };
+}
+
+function buildCalendarPlaceholderBubble(title) {
+  return {
+    type: "bubble",
+    size: "mega",
+    header: {
       type: "box",
       layout: "vertical",
-      spacing: "sm",
+      paddingAll: "18px",
+      backgroundColor: "#171717",
       contents: [
         {
-          type: "button",
-          style: "primary",
-          color: "#0F766E",
-          action: {
-            type: "uri",
-            label: "打開 Trello",
-            uri: card.url,
-          },
+          type: "text",
+          text: "fanfan Calendar",
+          color: "#A3A3A3",
+          size: "xs",
+        },
+        {
+          type: "text",
+          text: title,
+          color: "#FFFFFF",
+          size: "xl",
+          weight: "bold",
+          wrap: true,
+          margin: "sm",
+        },
+        {
+          type: "text",
+          text: `${formatTaipeiFullDate(new Date())} 更新`,
+          color: "#A3A3A3",
+          size: "sm",
+          margin: "sm",
+        },
+      ],
+    },
+    body: {
+      type: "box",
+      layout: "vertical",
+      paddingAll: "20px",
+      backgroundColor: "#FFFDF7",
+      contents: [
+        buildMiniMetric("來源", "Google", "#EEF2FF", "#4338CA"),
+        {
+          type: "text",
+          text: "Google Calendar 尚未串接到 Railway，所以這張卡目前先保留位置。完成 Google OAuth 後，這裡會列出幾點到幾點做什麼，以及下一個行程。",
+          color: "#374151",
+          size: "sm",
+          wrap: true,
+          margin: "lg",
         },
       ],
     },
   };
+}
+
+function buildMiniMetric(label, value, backgroundColor, accentColor) {
+  return {
+    type: "box",
+    layout: "vertical",
+    backgroundColor,
+    cornerRadius: "8px",
+    paddingAll: "10px",
+    flex: 1,
+    contents: [
+      {
+        type: "text",
+        text: label,
+        color: accentColor,
+        size: "xs",
+        weight: "bold",
+      },
+      {
+        type: "text",
+        text: value,
+        color: "#111827",
+        size: "xl",
+        weight: "bold",
+        margin: "xs",
+      },
+    ],
+  };
+}
+
+function buildTaskSummaryRows(card, index) {
+  const latestComment = formatLatestComments(card.comments)[0]?.replace(/^- /, "") || "沒有最新留言";
+  const inferredText = !card.due && card.inferredDueSource
+    ? `依留言判斷：${card.inferredDueSource.replace(/\s+/g, " ").trim()}`
+    : "";
+
+  return [
+    {
+      type: "separator",
+      margin: index === 0 ? "lg" : "md",
+    },
+    {
+      type: "box",
+      layout: "vertical",
+      margin: "md",
+      contents: [
+        {
+          type: "text",
+          text: `${index + 1}. ${truncate(card.name, 60)}`,
+          color: "#111827",
+          size: "sm",
+          weight: "bold",
+          wrap: true,
+        },
+        {
+          type: "text",
+          text: `${formatCardDue(card)} · ${card.listName}`,
+          color: "#6B7280",
+          size: "xs",
+          margin: "xs",
+          wrap: true,
+        },
+        inferredText
+          ? {
+              type: "text",
+              text: truncate(inferredText, 80),
+              color: "#B45309",
+              size: "xs",
+              wrap: true,
+              margin: "xs",
+            }
+          : undefined,
+        {
+          type: "text",
+          text: truncate(latestComment, 80),
+          color: "#374151",
+          size: "xs",
+          wrap: true,
+          margin: "xs",
+        },
+      ].filter(Boolean),
+    },
+  ];
 }
 
 function buildInfoBox(label, value, backgroundColor, accentColor) {
@@ -483,16 +652,18 @@ function buildInfoLine(label, value) {
   };
 }
 
-async function getReminderCards({ start, end }) {
+async function getReminderCards({ start, end, includeUndatedActions = false }) {
   const dueCards = await getDueCards({ start, end });
   const dueCardIds = new Set(dueCards.map((card) => card.id));
   const openCards = await getOpenCards();
+  const boardComments = await getBoardComments();
+  const commentsByCardId = groupCommentsByCardId(boardComments);
   const commentMatchedCards = [];
 
   for (const card of openCards) {
     if (dueCardIds.has(card.id)) continue;
 
-    const comments = await getCardComments(card.id, 5);
+    const comments = commentsByCardId.get(card.id) || [];
     const matchedComment = comments.find((comment) => {
       const taskDate = parseTaskDateFromComment(comment);
       if (!taskDate) return false;
@@ -506,6 +677,18 @@ async function getReminderCards({ start, end }) {
         inferredDueSource: matchedComment.data?.text || "",
         comments,
       });
+      continue;
+    }
+
+    if (includeUndatedActions && isActiveWorkList(card) && comments.some(isActionComment)) {
+      const actionComment = comments.find(isActionComment);
+      commentMatchedCards.push({
+        ...card,
+        inferredDue: start,
+        inferredDueSource: actionComment.data?.text || "",
+        dueLabel: "待安排",
+        comments,
+      });
     }
   }
 
@@ -514,6 +697,39 @@ async function getReminderCards({ start, end }) {
     const bDue = new Date(b.due || b.inferredDue).getTime();
     return aDue - bDue;
   });
+}
+
+function isActiveWorkList(card) {
+  const activeListIds = new Set([
+    process.env.TRELLO_DEFAULT_LIST_ID,
+    "69b14b6aa0613a0604e86597",
+    "69b14b6aa0613a0604e8659c",
+    "69b14b6aa0613a0604e86596",
+    "69b14b6aa0613a0604e86598",
+    "69b14b6aa0613a0604e86599",
+    "69b14b6aa0613a0604e8659a",
+  ].filter(Boolean));
+
+  return activeListIds.has(card.idList);
+}
+
+function isActionComment(comment) {
+  const text = comment.data?.text || "";
+  return /(腳本|Brief|brief|幫我看|幫我看看|麻煩你|需要|要交|交稿|切角|上線|回覆|確認|討論|拍攝|限動|貼文|Reels|報價|試用|寄給我|提供)/i.test(text);
+}
+
+function groupCommentsByCardId(comments) {
+  const grouped = new Map();
+
+  comments.forEach((comment) => {
+    const cardId = comment.data?.card?.id;
+    if (!cardId) return;
+
+    if (!grouped.has(cardId)) grouped.set(cardId, []);
+    grouped.get(cardId).push(comment);
+  });
+
+  return grouped;
 }
 
 function parseCollaborationCard(text) {
@@ -648,6 +864,12 @@ function parseTaskDate(text, baseDate = new Date()) {
   const weekday = parseRelativeWeekday(normalized, base);
   if (weekday) return weekday;
 
+  const bareWeekday = parseBareWeekday(normalized, base);
+  if (bareWeekday) return bareWeekday;
+
+  const monthEdge = parseMonthEdge(normalized, base);
+  if (monthEdge) return monthEdge;
+
   return undefined;
 }
 
@@ -695,6 +917,32 @@ function parseRelativeWeekday(text, base) {
   const dayOffset = weekOffset + targetWeekday - normalizedBaseWeekday;
 
   return taipeiDateToUtc(base.year, base.month, base.day + dayOffset);
+}
+
+function parseBareWeekday(text, base) {
+  const match = text.match(/(?:週|禮拜|星期)([一二三四五六日天])/);
+  if (!match) return undefined;
+
+  const targetWeekday = weekdayNumber(match[1]);
+  const baseWeekday = new Date(Date.UTC(base.year, base.month - 1, base.day, 12)).getUTCDay();
+  const normalizedBaseWeekday = baseWeekday === 0 ? 7 : baseWeekday;
+  const dayOffset = targetWeekday >= normalizedBaseWeekday
+    ? targetWeekday - normalizedBaseWeekday
+    : targetWeekday - normalizedBaseWeekday + 7;
+
+  return taipeiDateToUtc(base.year, base.month, base.day + dayOffset);
+}
+
+function parseMonthEdge(text, base) {
+  if (text.includes("月底")) {
+    return taipeiDateToUtc(base.year, base.month + 1, 0);
+  }
+
+  if (text.includes("月初")) {
+    return taipeiDateToUtc(base.year, base.month, 1);
+  }
+
+  return undefined;
 }
 
 function weekdayNumber(text) {
@@ -745,6 +993,23 @@ function formatTaipeiDateTime(dateText) {
     minute: "2-digit",
     hour12: false,
   }).format(new Date(dateText));
+}
+
+function formatCardDue(card) {
+  if (card.dueLabel) return card.dueLabel;
+  return formatTaipeiDateTime(card.due || card.inferredDue);
+}
+
+function formatTaipeiFullDate(date) {
+  return new Intl.DateTimeFormat("zh-TW", {
+    timeZone: "Asia/Taipei",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(date);
 }
 
 async function replyText(replyToken, text) {
