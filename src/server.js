@@ -91,6 +91,12 @@ async function handleEvent(event) {
     return;
   }
 
+  if (isNextWeekReminderMessage(userText)) {
+    const reply = await handleTrelloReminder("nextWeek");
+    await replyMessage(event.replyToken, reply);
+    return;
+  }
+
   if (isTrelloCardMessage(userText)) {
     const reply = await handleTrelloCard(userText);
     await replyText(event.replyToken, reply);
@@ -157,6 +163,7 @@ function buildHelpMessage() {
     "Trello lists：列出看板清單 ID",
     "今天任務：看今天要完成的 Trello 卡片",
     "本週任務：看本週要完成的 Trello 卡片",
+    "下週任務：看下週要完成的 Trello 卡片",
     "待辦：明天整理品牌報價",
     "提醒：下週三 14:00 回覆合作信",
     "brief：貼上品牌資料，我幫妳整理腳本方向",
@@ -179,6 +186,10 @@ function isTodayReminderMessage(text) {
 
 function isWeekReminderMessage(text) {
   return ["本週任務", "這週任務", "本周任務", "本週提醒", "這週提醒"].includes(text);
+}
+
+function isNextWeekReminderMessage(text) {
+  return ["下週任務", "下周任務", "下禮拜任務", "下星期任務", "下週提醒", "下禮拜提醒"].includes(text);
 }
 
 async function handleTrelloLists() {
@@ -562,11 +573,12 @@ function getReminderRange(range) {
 
   const dayOfWeek = new Date(Date.UTC(today.year, today.month - 1, today.day, 12)).getUTCDay();
   const mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+  const weekOffset = range === "nextWeek" ? 7 : 0;
 
   return {
-    label: "本週",
-    start: taipeiDateToUtc(today.year, today.month, today.day + mondayOffset),
-    end: taipeiDateToUtc(today.year, today.month, today.day + mondayOffset + 7),
+    label: range === "nextWeek" ? "下週" : "本週",
+    start: taipeiDateToUtc(today.year, today.month, today.day + mondayOffset + weekOffset),
+    end: taipeiDateToUtc(today.year, today.month, today.day + mondayOffset + weekOffset + 7),
   };
 }
 
