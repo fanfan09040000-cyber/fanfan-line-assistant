@@ -2,6 +2,7 @@ import "dotenv/config";
 import express from "express";
 import { Client, middleware } from "@line/bot-sdk";
 import OpenAI from "openai";
+import { createTrelloCard, getBoardLists, isTrelloConfigured } from "./trello.js";
 
 const {
   LINE_CHANNEL_ACCESS_TOKEN,
@@ -65,6 +66,18 @@ async function handleEvent(event) {
     return;
   }
 
+  if (isTrelloListMessage(userText)) {
+    const reply = await handleTrelloLists();
+    await replyText(event.replyToken, reply);
+    return;
+  }
+
+  if (isTrelloCardMessage(userText)) {
+    const reply = await handleTrelloCard(userText);
+    await replyText(event.replyToken, reply);
+    return;
+  }
+
   const assistantReply = await askAssistant(userText);
   await replyText(event.replyToken, assistantReply);
 }
@@ -121,12 +134,104 @@ function buildHelpMessage() {
   return [
     "可以這樣叫我：",
     "",
+    "合作：品牌 / 產品 / 截止日 / 備註",
+    "Trello lists：列出看板清單 ID",
     "待辦：明天整理品牌報價",
     "提醒：下週三 14:00 回覆合作信",
     "brief：貼上品牌資料，我幫妳整理腳本方向",
     "腳本：幫我寫一支保養品 Reels",
     "今天摘要：整理今天要做的事",
   ].join("\n");
+}
+
+function isTrelloListMessage(text) {
+  return ["trello lists", "Trello lists", "清單ID", "清單 ID"].includes(text);
+}
+
+function isTrelloCardMessage(text) {
+  return text.startsWith("合作：") || text.startsWith("合作:");
+}
+
+async function handleTrelloLists() {
+  if (!isTrelloConfigured()) {
+    return "Trello 還沒設定好。需要先在 Railway 加 TRELLO_API_KEY、TRELLO_TOKEN、TRELLO_BOARD_ID。";
+  }
+
+  try {
+    const lists = await getBoardLists();
+    return [
+      "這是妳 Trello 看板的清單 ID：",
+      "",
+      ...lists.map((list) => `${list.name}\n${list.id}`),
+    ].join("\n\n");
+  } catch (error) {
+    console.error(error);
+    return "我剛剛讀 Trello 清單失敗，通常是 API key、token 或 board ID 有問題。";
+  }
+}
+
+async function handleTrelloCard(text) {
+  if (!isTrelloConfigured()) {
+    return "Trello 還沒設定好。需要先在 Railway 加 TRELLO_API_KEY、TRELLO_TOKEN、TRELLO_DEFAULT_LIST_ID。";
+  }
+
+  const cardInput = parseCollaborationCard(text);
+
+  try {
+    const card = await createTrelloCard(cardInput);
+    return [
+      "已經幫妳建立 Trello 合作卡片：",
+      card.name,
+      card.shortUrl,
+    ].join("\n");
+  } catch (error) {
+    console.error(error);
+    return "我剛剛建立 Trello 卡片失敗，可能是 list ID、API token 權限，或 Trello 連線有問題。";
+  }
+}
+
+function parseCollaborationCard(text) {
+  const raw = text.replace(/^合作[:：]/, "").trim();
+  const parts = raw
+    .split("/")
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  const [brand = "未命名品牌", product = "未填產品", dueText = "", ...notes] = parts;
+  const due = parseDueDate(dueText);
+
+  return {
+    name: `${brand}｜${product}`,
+    due,
+    desc: [
+      `品牌：${brand}`,
+      `產品：${product}`,
+      dueText ? `截止日：${dueText}` : "",
+      notes.length > 0 ? `備註：${notes.join(" / ")}` : "",
+      "",
+      "LINE 助理自動建立。",
+    ]
+      .filter(Boolean)
+      .join("\n"),
+  };
+}
+
+function parseDueDate(text) {
+  const trimmed = text.trim();
+  if (!trimmed) return undefined;
+
+  const isoLike = trimmed.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/);
+  if (!isoLike) return undefined;
+
+  const [, year, month, day] = isoLike;
+  return new Date(
+    Number(year),
+    Number(month) - 1,
+    Number(day),
+    18,
+    0,
+    0
+  ).toISOString();
 }
 
 async function replyText(replyToken, text) {
