@@ -81,13 +81,13 @@ async function handleEvent(event) {
 
   if (isTodayReminderMessage(userText)) {
     const reply = await handleTrelloReminder("today");
-    await replyText(event.replyToken, reply);
+    await replyMessage(event.replyToken, reply);
     return;
   }
 
   if (isWeekReminderMessage(userText)) {
     const reply = await handleTrelloReminder("week");
-    await replyText(event.replyToken, reply);
+    await replyMessage(event.replyToken, reply);
     return;
   }
 
@@ -246,11 +246,230 @@ async function handleTrelloReminder(range) {
       })
     );
 
-    return formatReminder(label, cardsWithComments);
+    return buildReminderFlex(label, cardsWithComments);
   } catch (error) {
     console.error(error);
     return "我剛剛讀 Trello 任務失敗，可能是 Trello 權限、Board ID，或 API token 有問題。";
   }
+}
+
+function buildReminderFlex(label, cards) {
+  const displayCards = cards.slice(0, 10);
+  const extraCount = cards.length - displayCards.length;
+
+  return {
+    type: "flex",
+    altText: `${label} Trello 任務：${cards.length} 件`,
+    contents: {
+      type: "carousel",
+      contents: [
+        buildSummaryBubble(label, cards.length, extraCount),
+        ...displayCards.map((card, index) => buildTaskBubble(card, index)),
+      ],
+    },
+  };
+}
+
+function buildSummaryBubble(label, count, extraCount) {
+  const extraText = extraCount > 0 ? `另有 ${extraCount} 件未顯示，請打開 Trello 查看。` : "左右滑可以看每一張任務卡。";
+
+  return {
+    type: "bubble",
+    size: "mega",
+    body: {
+      type: "box",
+      layout: "vertical",
+      paddingAll: "20px",
+      backgroundColor: "#101820",
+      contents: [
+        {
+          type: "text",
+          text: `${label}任務圖卡`,
+          color: "#F7F1E5",
+          size: "xl",
+          weight: "bold",
+        },
+        {
+          type: "text",
+          text: `${count} 件需要留意`,
+          color: "#F2C14E",
+          size: "md",
+          weight: "bold",
+          margin: "lg",
+        },
+        {
+          type: "text",
+          text: extraText,
+          color: "#C9D1D9",
+          size: "sm",
+          wrap: true,
+          margin: "md",
+        },
+      ],
+    },
+  };
+}
+
+function buildTaskBubble(card, index) {
+  const labels = card.labels?.map((item) => item.name).filter(Boolean).join("、");
+  const latestComment = formatLatestComments(card.comments)[0]?.replace(/^- /, "") || "沒有最新留言";
+  const inferredText = !card.due && card.inferredDueSource
+    ? `依留言判斷：${card.inferredDueSource.replace(/\s+/g, " ").trim()}`
+    : "";
+
+  return {
+    type: "bubble",
+    size: "mega",
+    header: {
+      type: "box",
+      layout: "vertical",
+      paddingAll: "18px",
+      backgroundColor: "#171717",
+      contents: [
+        {
+          type: "text",
+          text: `#${index + 1} Trello 任務`,
+          color: "#A3A3A3",
+          size: "xs",
+          weight: "bold",
+        },
+        {
+          type: "text",
+          text: truncate(card.name, 70),
+          color: "#FFFFFF",
+          size: "xl",
+          weight: "bold",
+          wrap: true,
+          margin: "sm",
+        },
+        {
+          type: "text",
+          text: `到期 ${formatTaipeiDateTime(card.due || card.inferredDue)}`,
+          color: "#A3A3A3",
+          size: "sm",
+          margin: "sm",
+        },
+      ],
+    },
+    body: {
+      type: "box",
+      layout: "vertical",
+      paddingAll: "18px",
+      backgroundColor: "#FFFDF7",
+      contents: [
+        buildInfoBox("清單", card.listName, "#F7F1E5", "#A16207"),
+        buildInfoBox("到期", formatTaipeiDateTime(card.due || card.inferredDue), "#EEF2FF", "#4338CA"),
+        labels ? buildInfoLine("標籤", labels) : undefined,
+        inferredText
+          ? {
+              type: "text",
+              text: truncate(inferredText, 110),
+              color: "#B45309",
+              size: "xs",
+              wrap: true,
+              margin: "md",
+            }
+          : undefined,
+        {
+          type: "box",
+          layout: "vertical",
+          backgroundColor: "#F3F4F6",
+          cornerRadius: "8px",
+          paddingAll: "10px",
+          margin: "md",
+          contents: [
+            {
+              type: "text",
+              text: "最新留言",
+              color: "#6B7280",
+              size: "xs",
+              weight: "bold",
+            },
+            {
+              type: "text",
+              text: truncate(latestComment, 150),
+              color: "#111827",
+              size: "sm",
+              wrap: true,
+              margin: "xs",
+            },
+          ],
+        },
+      ].filter(Boolean),
+    },
+    footer: {
+      type: "box",
+      layout: "vertical",
+      spacing: "sm",
+      contents: [
+        {
+          type: "button",
+          style: "primary",
+          color: "#0F766E",
+          action: {
+            type: "uri",
+            label: "打開 Trello",
+            uri: card.url,
+          },
+        },
+      ],
+    },
+  };
+}
+
+function buildInfoBox(label, value, backgroundColor, accentColor) {
+  return {
+    type: "box",
+    layout: "vertical",
+    backgroundColor,
+    cornerRadius: "8px",
+    paddingAll: "12px",
+    margin: "sm",
+    contents: [
+      {
+        type: "text",
+        text: label,
+        color: accentColor,
+        size: "xs",
+        weight: "bold",
+      },
+      {
+        type: "text",
+        text: String(value),
+        color: "#111827",
+        size: "lg",
+        weight: "bold",
+        wrap: true,
+        margin: "xs",
+      },
+    ],
+  };
+}
+
+function buildInfoLine(label, value) {
+  return {
+    type: "box",
+    layout: "baseline",
+    spacing: "sm",
+    margin: "md",
+    contents: [
+      {
+        type: "text",
+        text: label,
+        color: "#6B7280",
+        size: "xs",
+        flex: 1,
+      },
+      {
+        type: "text",
+        text: String(value),
+        color: "#111827",
+        size: "sm",
+        flex: 4,
+        wrap: true,
+      },
+    ],
+  };
 }
 
 async function getReminderCards({ start, end }) {
@@ -517,12 +736,26 @@ function formatTaipeiDateTime(dateText) {
 }
 
 async function replyText(replyToken, text) {
+  await replyMessage(replyToken, text);
+}
+
+async function replyMessage(replyToken, payload) {
+  if (typeof payload !== "string") {
+    await lineClient.replyMessage(replyToken, payload);
+    return;
+  }
+
   const message = {
     type: "text",
-    text: text.slice(0, 5000),
+    text: payload.slice(0, 5000),
   };
 
   await lineClient.replyMessage(replyToken, message);
+}
+
+function truncate(text, maxLength) {
+  if (!text || text.length <= maxLength) return text || "";
+  return `${text.slice(0, maxLength - 1)}…`;
 }
 
 app.listen(PORT, () => {
