@@ -3,11 +3,20 @@ name: Daily LINE Summary
 on:
   schedule:
     - cron: "0 1 * * *"
+    - cron: "0 14 * * *"
   workflow_dispatch:
 
 jobs:
-  push-summary:
+  push-daily-summary:
+    if: github.event_name != 'schedule' || github.event.schedule == '0 1 * * *'
     runs-on: ubuntu-latest
     steps:
       - name: Push daily LINE summary
         run: curl -fsS "https://fanfan-line-assistant-production.up.railway.app/push/daily?secret=${{ secrets.CRON_SECRET }}"
+
+  push-tomorrow-calendar:
+    if: github.event_name != 'schedule' || github.event.schedule == '0 14 * * *'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Push tomorrow calendar
+        run: curl -fsS "https://fanfan-line-assistant-production.up.railway.app/push/tomorrow?secret=${{ secrets.CRON_SECRET }}"
