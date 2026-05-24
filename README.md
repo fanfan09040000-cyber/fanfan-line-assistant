@@ -39,6 +39,7 @@ GOOGLE_CLIENT_ID=
 GOOGLE_CLIENT_SECRET=
 GOOGLE_REFRESH_TOKEN=
 GOOGLE_CALENDAR_ID=primary
+GOOGLE_REDIRECT_URI=https://fanfan-line-assistant-production.up.railway.app/google/callback
 ```
 
 ## LINE 設定
@@ -147,6 +148,20 @@ TRELLO_DEFAULT_LIST_ID
 
 1. 設定 `GOOGLE_CALENDAR_API_URL`，讓 Railway 從外部日曆 API 讀行程。
 2. 設定 `GOOGLE_CLIENT_ID`、`GOOGLE_CLIENT_SECRET`、`GOOGLE_REFRESH_TOKEN`，讓 Railway 直接讀 Google Calendar API。
+
+OAuth redirect URI：
+
+```text
+https://fanfan-line-assistant-production.up.railway.app/google/callback
+```
+
+設定好 `GOOGLE_CLIENT_ID` 和 `GOOGLE_CLIENT_SECRET` 後，打開：
+
+```text
+https://fanfan-line-assistant-production.up.railway.app/google/auth
+```
+
+授權完成後，把頁面上的 refresh token 放進 Railway 的 `GOOGLE_REFRESH_TOKEN`。
 
 LINE 可測：
 
