@@ -33,6 +33,12 @@ TRELLO_DEFAULT_LIST_ID=
 TRELLO_DEFAULT_LABEL_IDS=
 LINE_TARGET_USER_ID=
 CRON_SECRET=
+GOOGLE_CALENDAR_API_URL=
+GOOGLE_CALENDAR_API_SECRET=
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
+GOOGLE_REFRESH_TOKEN=
+GOOGLE_CALENDAR_ID=primary
 ```
 
 ## LINE 設定
@@ -117,7 +123,7 @@ TRELLO_DEFAULT_LIST_ID
 今天任務
 ```
 
-助理會回傳今天到期的 Trello 卡片，並附上最新留言。
+助理會回傳今天時程表內有「提供貼文」或「上線日」的 Trello 卡片。
 
 在 LINE 傳：
 
@@ -125,4 +131,26 @@ TRELLO_DEFAULT_LIST_ID
 本週任務
 ```
 
-助理會回傳本週到期的 Trello 卡片，並附上最新留言。
+助理會回傳本週時程表內有「提供貼文」或「上線日」的 Trello 卡片。
+
+現在任務提醒只讀 Trello 卡片描述裡的時程表，並只顯示：
+
+- 卡片主名稱
+- 提供貼文
+- 上線日
+
+不會再用留言內容推測任務日期。
+
+## Google Calendar
+
+行程卡支援兩種設定方式，擇一即可：
+
+1. 設定 `GOOGLE_CALENDAR_API_URL`，讓 Railway 從外部日曆 API 讀行程。
+2. 設定 `GOOGLE_CLIENT_ID`、`GOOGLE_CLIENT_SECRET`、`GOOGLE_REFRESH_TOKEN`，讓 Railway 直接讀 Google Calendar API。
+
+LINE 可測：
+
+```text
+下週行程
+今日總結
+```
