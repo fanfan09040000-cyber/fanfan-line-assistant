@@ -603,6 +603,8 @@ function buildMiniMetric(label, value, backgroundColor, accentColor) {
 }
 
 function buildTaskSummaryRows(card, index) {
+  const provideText = formatProvideItems(card.schedule.relevantProvideItems);
+
   return [
     {
       type: "separator",
@@ -623,7 +625,7 @@ function buildTaskSummaryRows(card, index) {
         },
         {
           type: "text",
-          text: `提供貼文：${formatScheduleDate(card.schedule.postDate)}`,
+          text: `提供：${provideText}`,
           color: "#6B7280",
           size: "xs",
           margin: "xs",
@@ -682,23 +684,57 @@ function parseScheduleTable(desc) {
     .map((line) => line.trim())
     .filter(Boolean);
   const schedule = {
-    postDate: undefined,
+    provideItems: [],
     publishDate: undefined,
+    publishLabel: "",
   };
 
   for (const line of lines) {
     if (/^[-|:\s]+$/.test(line)) continue;
 
-    if (line.includes("提供貼文") && !schedule.postDate) {
-      schedule.postDate = parseScheduleDate(line);
+    if (isProvideScheduleLine(line)) {
+      const date = parseScheduleDate(line);
+      if (date) {
+        schedule.provideItems.push({
+          date,
+          label: parseScheduleLabel(line) || "提供",
+        });
+      }
     }
 
     if (/上線日|上線時間|正式上線/.test(line) && !schedule.publishDate) {
       schedule.publishDate = parseScheduleDate(line);
+      schedule.publishLabel = parseScheduleLabel(line) || "上線";
+    }
+
+    if (isPublishScheduleLine(line) && !schedule.publishDate) {
+      schedule.publishDate = parseScheduleDate(line);
+      schedule.publishLabel = parseScheduleLabel(line) || "上線";
     }
   }
 
+  schedule.provideItems.sort((a, b) => a.date.getTime() - b.date.getTime());
   return schedule;
+}
+
+function isProvideScheduleLine(line) {
+  return /提供/.test(line) && !/品牌回覆|客戶回覆|回覆/.test(line);
+}
+
+function isPublishScheduleLine(line) {
+  return /上線|上片/.test(line);
+}
+
+function parseScheduleLabel(line) {
+  return line
+    .replace(/\*\*/g, "")
+    .replace(/\d{4}[/-]\d{1,2}[/-]\d{1,2}/g, "")
+    .replace(/\d{4}年\d{1,2}月\d{1,2}[日號]?/g, "")
+    .replace(/\d{1,2}[月/]\d{1,2}[日號]?/g, "")
+    .replace(/[（(][一二三四五六日天][）)]/g, "")
+    .replace(/[:：]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function parseScheduleDate(text) {
@@ -750,7 +786,9 @@ function normalizeHour(hour, meridiem) {
 }
 
 function getScheduleSortTime(schedule) {
-  return (schedule.postDate || schedule.publishDate || new Date(8640000000000000)).getTime();
+  return (schedule.relevantProvideItems?.[0]?.date ||
+    schedule.publishDate ||
+    new Date(8640000000000000)).getTime();
 }
 
 function formatScheduleDate(date) {
@@ -765,6 +803,15 @@ function formatScheduleDate(date) {
     minute: "2-digit",
     hour12: false,
   }).format(date);
+}
+
+function formatProvideItems(items = []) {
+  if (items.length === 0) return "未填";
+
+  return items
+    .slice(0, 3)
+    .map((item) => `${formatScheduleDate(item.date)} ${item.label}`)
+    .join("、");
 }
 
 function formatCalendarEventTime(event) {
@@ -852,8 +899,20 @@ async function getReminderCards({ start, end }) {
       ...card,
       schedule: parseScheduleTable(card.desc || ""),
     }))
+    .map((card) => ({
+      ...card,
+      schedule: {
+        ...card.schedule,
+        relevantProvideItems: card.schedule.provideItems.filter((item) =>
+          item.date.getTime() >= startTime && item.date.getTime() < endTime
+        ),
+      },
+    }))
     .filter((card) => {
-      const dates = [card.schedule.postDate, card.schedule.publishDate].filter(Boolean);
+      const dates = [
+        ...card.schedule.provideItems.map((item) => item.date),
+        card.schedule.publishDate,
+      ].filter(Boolean);
       return dates.some((date) => date.getTime() >= startTime && date.getTime() < endTime);
     })
     .sort((a, b) => getScheduleSortTime(a.schedule) - getScheduleSortTime(b.schedule));
