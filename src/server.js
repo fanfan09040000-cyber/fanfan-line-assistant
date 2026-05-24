@@ -1193,16 +1193,13 @@ function getReminderRange(range) {
     };
   }
 
-  const dayOfWeek = new Date(Date.UTC(today.year, today.month - 1, today.day, 12)).getUTCDay();
-  const mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
-  const weekOffset = range === "nextWeek" ? 7 : 0;
-  const weekStart = taipeiDateToUtc(today.year, today.month, today.day + mondayOffset + weekOffset);
-  const weekEnd = taipeiDateToUtc(today.year, today.month, today.day + mondayOffset + weekOffset + 7);
+  const startOffset = range === "nextWeek" ? 7 : 0;
+  const endOffset = range === "nextWeek" ? 14 : 7;
 
   return {
     label: range === "nextWeek" ? "下週" : "本週",
-    start: range === "nextWeek" ? weekStart : new Date(Math.max(todayStart.getTime(), weekStart.getTime())),
-    end: weekEnd,
+    start: taipeiDateToUtc(today.year, today.month, today.day + startOffset),
+    end: taipeiDateToUtc(today.year, today.month, today.day + endOffset),
   };
 }
 
