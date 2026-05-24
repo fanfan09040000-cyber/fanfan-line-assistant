@@ -190,6 +190,18 @@ async function handleEvent(event) {
     return;
   }
 
+  if (isTodayCalendarMessage(userText)) {
+    const range = getReminderRange("today");
+    await replyMessage(event.replyToken, await buildCalendarFlex("今日行程", range));
+    return;
+  }
+
+  if (isWeekCalendarMessage(userText)) {
+    const range = getReminderRange("week");
+    await replyMessage(event.replyToken, await buildCalendarFlex("本週行程", range));
+    return;
+  }
+
   if (isNextWeekCalendarMessage(userText)) {
     const range = getReminderRange("nextWeek");
     await replyMessage(event.replyToken, await buildCalendarFlex("下週行程", range));
@@ -270,6 +282,8 @@ function buildHelpMessage() {
     "今天任務：看今天要完成的 Trello 卡片",
     "本週任務：看本週要完成的 Trello 卡片",
     "下週任務：看下週要完成的 Trello 卡片",
+    "今日行程：看今天 Google 行事曆",
+    "本週行程：看本週 Google 行事曆",
     "下週行程：看下週 Google 行事曆",
     "今日總結：三張卡片總結今日行程、今日任務、本週任務",
     "綁定提醒：取得每天 9 點推播需要的 LINE userId",
@@ -303,6 +317,14 @@ function isWeekReminderMessage(text) {
 
 function isNextWeekReminderMessage(text) {
   return ["下週任務", "下周任務", "下禮拜任務", "下星期任務", "下週提醒", "下禮拜提醒"].includes(text);
+}
+
+function isTodayCalendarMessage(text) {
+  return ["今日行程", "今天行程", "今日行事曆", "今天行事曆"].includes(text);
+}
+
+function isWeekCalendarMessage(text) {
+  return ["本週行程", "這週行程", "本周行程", "本週行事曆", "這週行事曆"].includes(text);
 }
 
 function isNextWeekCalendarMessage(text) {
