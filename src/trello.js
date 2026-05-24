@@ -77,7 +77,7 @@ export async function getDueCards({ start, end, boardId = process.env.TRELLO_BOA
   const params = new URLSearchParams({
     key: process.env.TRELLO_API_KEY,
     token: process.env.TRELLO_TOKEN,
-    fields: "name,due,dueComplete,url,idList,labels,dateLastActivity",
+    fields: "name,desc,due,dueComplete,url,idList,labels,dateLastActivity",
     filter: "open",
   });
 
@@ -113,7 +113,7 @@ export async function getOpenCards(boardId = process.env.TRELLO_BOARD_ID) {
   const params = new URLSearchParams({
     key: process.env.TRELLO_API_KEY,
     token: process.env.TRELLO_TOKEN,
-    fields: "name,due,dueComplete,url,idList,labels,dateLastActivity",
+    fields: "name,desc,due,dueComplete,url,idList,labels,dateLastActivity",
     filter: "open",
   });
 
