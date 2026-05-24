@@ -127,6 +127,28 @@ app.get("/push/daily", async (req, res) => {
   }
 });
 
+app.get("/push/tomorrow", async (req, res) => {
+  if (!CRON_SECRET || req.query.secret !== CRON_SECRET) {
+    res.status(401).json({ ok: false });
+    return;
+  }
+
+  if (!LINE_TARGET_USER_ID) {
+    res.status(400).json({ ok: false, error: "Missing LINE_TARGET_USER_ID" });
+    return;
+  }
+
+  try {
+    const range = getReminderRange("tomorrow");
+    const message = await buildCalendarFlex("明日行程", range);
+    await lineClient.pushMessage(LINE_TARGET_USER_ID, message);
+    res.status(200).json({ ok: true });
+  } catch (error) {
+    console.error("Tomorrow push failed:", error);
+    res.status(500).json({ ok: false });
+  }
+});
+
 app.post("/webhook", middleware(lineConfig), async (req, res) => {
   res.status(200).end();
 
@@ -193,6 +215,12 @@ async function handleEvent(event) {
   if (isTodayCalendarMessage(userText)) {
     const range = getReminderRange("today");
     await replyMessage(event.replyToken, await buildCalendarFlex("今日行程", range));
+    return;
+  }
+
+  if (isTomorrowCalendarMessage(userText)) {
+    const range = getReminderRange("tomorrow");
+    await replyMessage(event.replyToken, await buildCalendarFlex("明日行程", range));
     return;
   }
 
@@ -283,6 +311,7 @@ function buildHelpMessage() {
     "本週任務：看本週要完成的 Trello 卡片",
     "下週任務：看下週要完成的 Trello 卡片",
     "今日行程：看今天 Google 行事曆",
+    "明日行程：看明天 Google 行事曆",
     "本週行程：看本週 Google 行事曆",
     "下週行程：看下週 Google 行事曆",
     "今日總結：三張卡片總結今日行程、今日任務、本週任務",
@@ -321,6 +350,10 @@ function isNextWeekReminderMessage(text) {
 
 function isTodayCalendarMessage(text) {
   return ["今日行程", "今天行程", "今日行事曆", "今天行事曆"].includes(text);
+}
+
+function isTomorrowCalendarMessage(text) {
+  return ["明日行程", "明天行程", "明日行事曆", "明天行事曆"].includes(text);
 }
 
 function isWeekCalendarMessage(text) {
@@ -1236,6 +1269,14 @@ function getReminderRange(range) {
       label: "今天",
       start: todayStart,
       end: taipeiDateToUtc(today.year, today.month, today.day + 1),
+    };
+  }
+
+  if (range === "tomorrow") {
+    return {
+      label: "明天",
+      start: taipeiDateToUtc(today.year, today.month, today.day + 1),
+      end: taipeiDateToUtc(today.year, today.month, today.day + 2),
     };
   }
 
