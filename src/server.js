@@ -755,6 +755,9 @@ function buildMiniMetric(label, value, backgroundColor, accentColor) {
 
 function buildTaskSummaryRows(card, index) {
   const provideText = formatProvideItems(card.schedule.relevantProvideItems);
+  const publishText = card.schedule.relevantPublishDate
+    ? formatScheduleDate(card.schedule.relevantPublishDate)
+    : "不在這段時間";
 
   return [
     {
@@ -784,7 +787,7 @@ function buildTaskSummaryRows(card, index) {
         },
         {
           type: "text",
-          text: `上線日：${formatScheduleDate(card.schedule.publishDate)}`,
+          text: `上線日：${publishText}`,
           color: "#374151",
           size: "xs",
           wrap: true,
@@ -970,7 +973,7 @@ function normalizeHour(hour, meridiem) {
 
 function getScheduleSortTime(schedule) {
   return (schedule.relevantProvideItems?.[0]?.date ||
-    schedule.publishDate ||
+    schedule.relevantPublishDate ||
     new Date(8640000000000000)).getTime();
 }
 
@@ -1093,16 +1096,23 @@ async function getReminderCards({ start, end }) {
         relevantProvideItems: card.schedule.provideItems.filter((item) =>
           item.date.getTime() >= startTime && item.date.getTime() < endTime
         ),
+        relevantPublishDate: isDateInRange(card.schedule.publishDate, startTime, endTime)
+          ? card.schedule.publishDate
+          : undefined,
       },
     }))
     .filter((card) => {
       const dates = [
-        ...card.schedule.provideItems.map((item) => item.date),
-        card.schedule.publishDate,
+        ...card.schedule.relevantProvideItems.map((item) => item.date),
+        card.schedule.relevantPublishDate,
       ].filter(Boolean);
       return dates.some((date) => date.getTime() >= startTime && date.getTime() < endTime);
     })
     .sort((a, b) => getScheduleSortTime(a.schedule) - getScheduleSortTime(b.schedule));
+}
+
+function isDateInRange(date, startTime, endTime) {
+  return Boolean(date && date.getTime() >= startTime && date.getTime() < endTime);
 }
 
 async function getNewCollaborationCards() {
@@ -1173,11 +1183,12 @@ function parseDueDate(text) {
 
 function getReminderRange(range) {
   const today = getTaipeiToday();
+  const todayStart = taipeiDateToUtc(today.year, today.month, today.day);
 
   if (range === "today") {
     return {
       label: "今天",
-      start: taipeiDateToUtc(today.year, today.month, today.day),
+      start: todayStart,
       end: taipeiDateToUtc(today.year, today.month, today.day + 1),
     };
   }
@@ -1185,11 +1196,13 @@ function getReminderRange(range) {
   const dayOfWeek = new Date(Date.UTC(today.year, today.month - 1, today.day, 12)).getUTCDay();
   const mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
   const weekOffset = range === "nextWeek" ? 7 : 0;
+  const weekStart = taipeiDateToUtc(today.year, today.month, today.day + mondayOffset + weekOffset);
+  const weekEnd = taipeiDateToUtc(today.year, today.month, today.day + mondayOffset + weekOffset + 7);
 
   return {
     label: range === "nextWeek" ? "下週" : "本週",
-    start: taipeiDateToUtc(today.year, today.month, today.day + mondayOffset + weekOffset),
-    end: taipeiDateToUtc(today.year, today.month, today.day + mondayOffset + weekOffset + 7),
+    start: range === "nextWeek" ? weekStart : new Date(Math.max(todayStart.getTime(), weekStart.getTime())),
+    end: weekEnd,
   };
 }
 
