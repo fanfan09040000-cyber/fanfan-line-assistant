@@ -843,7 +843,7 @@ function buildCalendarRows(event, index) {
       contents: [
         {
           type: "text",
-          text: `${formatCalendarEventTime(event)} ${truncate(event.title, 56)}`,
+          text: `${formatCalendarEventDate(event.start)} ${formatCalendarEventTime(event)} ${truncate(event.title, 56)}`,
           color: "#111827",
           size: "sm",
           weight: "bold",
@@ -1001,6 +1001,8 @@ function formatProvideItems(items = []) {
 }
 
 function formatCalendarEventTime(event) {
+  if (isAllDayEvent(event)) return "全天";
+
   const start = new Intl.DateTimeFormat("zh-TW", {
     timeZone: "Asia/Taipei",
     hour: "2-digit",
@@ -1018,6 +1020,28 @@ function formatCalendarEventTime(event) {
   }).format(event.end);
 
   return `${start}-${end}`;
+}
+
+function formatCalendarEventDate(date) {
+  const parts = new Intl.DateTimeFormat("zh-TW", {
+    timeZone: "Asia/Taipei",
+    month: "2-digit",
+    day: "2-digit",
+    weekday: "short",
+  }).formatToParts(date);
+
+  const month = parts.find((part) => part.type === "month")?.value;
+  const day = parts.find((part) => part.type === "day")?.value;
+  const weekday = parts.find((part) => part.type === "weekday")?.value;
+
+  return `${month}/${day}（${weekday}）`;
+}
+
+function isAllDayEvent(event) {
+  return event.start.getHours() === 0 &&
+    event.start.getMinutes() === 0 &&
+    event.end?.getHours() === 0 &&
+    event.end?.getMinutes() === 0;
 }
 
 function buildInfoBox(label, value, backgroundColor, accentColor) {
