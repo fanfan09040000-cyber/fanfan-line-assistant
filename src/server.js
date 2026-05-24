@@ -53,6 +53,59 @@ app.get("/health", (_req, res) => {
   res.status(200).json({ ok: true });
 });
 
+app.get("/google/auth", async (_req, res) => {
+  if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET) {
+    res.status(400).send("Missing GOOGLE_CLIENT_ID or GOOGLE_CLIENT_SECRET.");
+    return;
+  }
+
+  const { google } = await import("googleapis");
+  const oauth2Client = new google.auth.OAuth2(
+    process.env.GOOGLE_CLIENT_ID,
+    process.env.GOOGLE_CLIENT_SECRET,
+    getGoogleRedirectUri()
+  );
+  const authUrl = oauth2Client.generateAuthUrl({
+    access_type: "offline",
+    prompt: "consent",
+    scope: ["https://www.googleapis.com/auth/calendar.readonly"],
+  });
+
+  res.redirect(authUrl);
+});
+
+app.get("/google/callback", async (req, res) => {
+  if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET) {
+    res.status(400).send("Missing GOOGLE_CLIENT_ID or GOOGLE_CLIENT_SECRET.");
+    return;
+  }
+
+  if (!req.query.code) {
+    res.status(400).send("Missing Google OAuth code.");
+    return;
+  }
+
+  try {
+    const { google } = await import("googleapis");
+    const oauth2Client = new google.auth.OAuth2(
+      process.env.GOOGLE_CLIENT_ID,
+      process.env.GOOGLE_CLIENT_SECRET,
+      getGoogleRedirectUri()
+    );
+    const { tokens } = await oauth2Client.getToken(String(req.query.code));
+
+    res.type("text/plain").send([
+      "Google Calendar 授權完成。",
+      "",
+      "請把下面這串放到 Railway 的 GOOGLE_REFRESH_TOKEN：",
+      tokens.refresh_token || "沒有拿到 refresh token，請重新從 /google/auth 授權一次。",
+    ].join("\n"));
+  } catch (error) {
+    console.error("Google OAuth callback failed:", error);
+    res.status(500).send("Google Calendar 授權失敗，請看 Railway logs。");
+  }
+});
+
 app.get("/push/daily", async (req, res) => {
   if (!CRON_SECRET || req.query.secret !== CRON_SECRET) {
     res.status(401).json({ ok: false });
@@ -885,6 +938,11 @@ function getTaipeiToday() {
     month: Number(parts.find((part) => part.type === "month").value),
     day: Number(parts.find((part) => part.type === "day").value),
   };
+}
+
+function getGoogleRedirectUri() {
+  return process.env.GOOGLE_REDIRECT_URI ||
+    "https://fanfan-line-assistant-production.up.railway.app/google/callback";
 }
 
 function taipeiDateToUtc(year, month, day, hour = 0, minute = 0) {
