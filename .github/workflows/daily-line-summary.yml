@@ -9,7 +9,7 @@ on:
       target:
         description: "Which push to test"
         required: true
-        default: "daily"
+        default: "tomorrow"
         type: choice
         options:
           - daily
