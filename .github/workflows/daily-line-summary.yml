@@ -5,17 +5,26 @@ on:
     - cron: "0 1 * * *"
     - cron: "0 14 * * *"
   workflow_dispatch:
+    inputs:
+      target:
+        description: "Which push to test"
+        required: true
+        default: "daily"
+        type: choice
+        options:
+          - daily
+          - tomorrow
 
 jobs:
   push-daily-summary:
-    if: github.event_name != 'schedule' || github.event.schedule == '0 1 * * *'
+    if: (github.event_name == 'schedule' && github.event.schedule == '0 1 * * *') || (github.event_name == 'workflow_dispatch' && inputs.target == 'daily')
     runs-on: ubuntu-latest
     steps:
       - name: Push daily LINE summary
         run: curl -fsS "https://fanfan-line-assistant-production.up.railway.app/push/daily?secret=${{ secrets.CRON_SECRET }}"
 
   push-tomorrow-calendar:
-    if: github.event_name != 'schedule' || github.event.schedule == '0 14 * * *'
+    if: (github.event_name == 'schedule' && github.event.schedule == '0 14 * * *') || (github.event_name == 'workflow_dispatch' && inputs.target == 'tomorrow')
     runs-on: ubuntu-latest
     steps:
       - name: Push tomorrow calendar
