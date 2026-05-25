@@ -7,6 +7,10 @@ import {
   isCalendarConfigured,
 } from "./calendar.js";
 import {
+  getContentLibraryIdeas,
+  isContentLibraryConfigured,
+} from "./contentLibrary.js";
+import {
   createTrelloCard,
   getBoardLists,
   getOpenCards,
@@ -68,7 +72,11 @@ app.get("/google/auth", async (_req, res) => {
   const authUrl = oauth2Client.generateAuthUrl({
     access_type: "offline",
     prompt: "consent",
-    scope: ["https://www.googleapis.com/auth/calendar.readonly"],
+    scope: [
+      "https://www.googleapis.com/auth/calendar.readonly",
+      "https://www.googleapis.com/auth/drive.metadata.readonly",
+      "https://www.googleapis.com/auth/presentations.readonly",
+    ],
   });
 
   res.redirect(authUrl);
@@ -523,13 +531,14 @@ async function buildCalendarEventsForRange(rangeInfo) {
 }
 
 async function buildContentPlanForToday(todayRange) {
-  const [events, weather] = await Promise.all([
+  const [events, weather, libraryIdeas] = await Promise.all([
     buildCalendarEventsForRange(todayRange),
     getTaipeiWeatherSummary(todayRange.start),
+    getContentLibraryIdeas({ limit: 4 }),
   ]);
   const signals = getContentSignals(events, weather);
   const freeSlot = findBestContentFreeSlot(events, todayRange.start);
-  const ideas = pickContentIdeas(signals);
+  const ideas = pickContentIdeas(signals, libraryIdeas);
 
   return {
     weather,
@@ -537,6 +546,8 @@ async function buildContentPlanForToday(todayRange) {
     shootingMode: buildShootingMode(signals, freeSlot),
     easyOption: buildEasyContentOption(signals),
     storyPlan: buildStoryPlan(events, signals),
+    libraryEnabled: isContentLibraryConfigured(),
+    libraryCount: libraryIdeas.length,
     ideas,
   };
 }
@@ -708,9 +719,13 @@ function pickStoryMiddleShot(signals) {
   return "包包內容物、桌面、穿搭細節";
 }
 
-function pickContentIdeas(signals) {
+function pickContentIdeas(signals, libraryIdeas = []) {
   const pool = [];
+  const pickedLibraryIdeas = libraryIdeas
+    .filter((idea) => isLibraryIdeaRelevant(idea, signals))
+    .slice(0, 2);
 
+  pool.push(...pickedLibraryIdeas);
   if (signals.hasWork) pool.push(...CONTENT_IDEAS.work);
   if (signals.hasSport) pool.push(...CONTENT_IDEAS.sport);
   if (signals.hasBeauty) pool.push(...CONTENT_IDEAS.beauty);
@@ -727,6 +742,15 @@ function pickContentIdeas(signals) {
   }
 
   return unique;
+}
+
+function isLibraryIdeaRelevant(idea, signals) {
+  const text = `${idea.title} ${idea.hook} ${idea.category || ""}`;
+  if (signals.hasSport && /體態|身形|運動|健康|健身|挑戰/.test(text)) return true;
+  if (signals.hasBeauty && /保養|變漂亮|妝|髮|美容|狀態/.test(text)) return true;
+  if (signals.hasWork && /工作|合作|品牌|拍攝|KOL|內容/.test(text)) return true;
+  if (signals.hasDaily && /生活|日常|自我揭露|聊聊天|diary|回顧/.test(text)) return true;
+  return true;
 }
 
 const CONTENT_IDEAS = {
@@ -1100,12 +1124,15 @@ function buildContentIdeasBubble(plan) {
     },
     buildInfoLine("拍攝建議", plan.shootingMode),
     buildInfoLine("輕鬆備案", plan.easyOption),
+    plan.libraryCount > 0
+      ? buildInfoLine("靈感庫", `已參考經紀人資料 ${plan.libraryCount} 則`)
+      : undefined,
     buildInfoLine("限動方向", plan.storyPlan.summary),
     buildSectionTitle("今日限動順序"),
     ...plan.storyPlan.frames.flatMap((frame, index) => buildStoryFrameRows(frame, index)),
     buildSectionTitle("今日 3 個主題"),
     ...plan.ideas.flatMap((idea, index) => buildContentIdeaRows(idea, index)),
-  ];
+  ].filter(Boolean);
 
   return buildBaseBubble("fanfan Reels", "今日拍攝靈感", contents);
 }
