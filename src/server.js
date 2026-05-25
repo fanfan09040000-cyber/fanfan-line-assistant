@@ -536,6 +536,7 @@ async function buildContentPlanForToday(todayRange) {
     freeSlot,
     shootingMode: buildShootingMode(signals, freeSlot),
     easyOption: buildEasyContentOption(signals),
+    storyPlan: buildStoryPlan(events, signals),
     ideas,
   };
 }
@@ -654,6 +655,57 @@ function buildEasyContentOption(signals) {
   if (signals.hasBeauty) return "變漂亮流程 Plog、拍攝前保養、今日妝容近拍";
   if (signals.hasDaily) return "咖啡廳工作 Plog、今日小狀態、生活感穿搭";
   return "GRWM、今天包包內容物、自由工作者的一小時";
+}
+
+function buildStoryPlan(events, signals) {
+  const visibleEvents = events
+    .filter((event) => !/上線|業配上線|交稿|提供/.test(event.title))
+    .slice(0, 3);
+  const anchor = visibleEvents[0]?.title || "今天的生活節奏";
+  const mood = signals.hasWork
+    ? "工作感但不要太硬"
+    : signals.hasSport
+      ? "有行動力、身體狀態"
+      : signals.hasBeauty
+        ? "變漂亮、照顧自己"
+        : "生活感、輕鬆 diary";
+
+  const frames = [
+    {
+      title: "開場",
+      text: `今天行程：${truncate(anchor, 18)}`,
+      shot: "行事曆截圖或出門前鏡子照",
+    },
+    {
+      title: "過程",
+      text: signals.hasSport
+        ? "讓自己先出門就贏一半"
+        : signals.hasBeauty
+          ? "把狀態慢慢整理回來"
+          : signals.hasWork
+            ? "今天先把重要的交出去"
+            : "普通日子也可以有一點可愛",
+      shot: pickStoryMiddleShot(signals),
+    },
+    {
+      title: "收尾",
+      text: "今天的小進度也算數",
+      shot: "回家路上、收工桌面或自拍一張",
+    },
+  ];
+
+  return {
+    summary: `${mood}，用 3 張限動串成今日感。`,
+    frames,
+  };
+}
+
+function pickStoryMiddleShot(signals) {
+  if (signals.hasSport) return "運動鞋、流汗、器材、課後整理";
+  if (signals.hasBeauty) return "指甲、妝容、保養、髮型細節";
+  if (signals.hasWork) return "電腦、brief、拍攝角落、補妝";
+  if (signals.hasDaily) return "咖啡、食物、街景、手部近拍";
+  return "包包內容物、桌面、穿搭細節";
 }
 
 function pickContentIdeas(signals) {
@@ -1048,11 +1100,46 @@ function buildContentIdeasBubble(plan) {
     },
     buildInfoLine("拍攝建議", plan.shootingMode),
     buildInfoLine("輕鬆備案", plan.easyOption),
+    buildInfoLine("限動方向", plan.storyPlan.summary),
+    buildSectionTitle("今日限動順序"),
+    ...plan.storyPlan.frames.flatMap((frame, index) => buildStoryFrameRows(frame, index)),
     buildSectionTitle("今日 3 個主題"),
     ...plan.ideas.flatMap((idea, index) => buildContentIdeaRows(idea, index)),
   ];
 
   return buildBaseBubble("fanfan Reels", "今日拍攝靈感", contents);
+}
+
+function buildStoryFrameRows(frame, index) {
+  return [
+    {
+      type: "separator",
+      margin: index === 0 ? "md" : "sm",
+    },
+    {
+      type: "box",
+      layout: "vertical",
+      margin: "sm",
+      contents: [
+        {
+          type: "text",
+          text: `${index + 1}. ${frame.title}：${frame.text}`,
+          color: "#111827",
+          size: "xs",
+          weight: "bold",
+          wrap: true,
+        },
+        {
+          type: "text",
+          text: `拍：${frame.shot}`,
+          color: "#6B7280",
+          size: "xs",
+          margin: "xs",
+          wrap: true,
+        },
+      ],
+    },
+  ];
 }
 
 function buildContentIdeaRows(idea, index) {
