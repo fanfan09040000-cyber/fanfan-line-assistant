@@ -242,6 +242,12 @@ async function handleEvent(event) {
     return;
   }
 
+  if (isContentIdeasMessage(userText)) {
+    const reply = await buildContentIdeasFlex();
+    await replyMessage(event.replyToken, reply);
+    return;
+  }
+
   if (isTrelloCardMessage(userText)) {
     const reply = await handleTrelloCard(userText);
     await replyText(event.replyToken, reply);
@@ -315,6 +321,7 @@ function buildHelpMessage() {
     "本週行程：看本週 Google 行事曆",
     "下週行程：看下週 Google 行事曆",
     "今日總結：三張卡片總結今日行程、今日任務、本週任務",
+    "今天拍什麼：依照行程和天氣給今日拍攝靈感",
     "綁定提醒：取得每天 9 點推播需要的 LINE userId",
     "待辦：明天整理品牌報價",
     "提醒：下週三 14:00 回覆合作信",
@@ -366,6 +373,10 @@ function isNextWeekCalendarMessage(text) {
 
 function isDailySummaryMessage(text) {
   return ["今日總結", "今天總結", "每日總結", "早安摘要", "今天摘要"].includes(text);
+}
+
+function isContentIdeasMessage(text) {
+  return ["今天拍什麼", "今日拍攝靈感", "拍攝靈感", "今日內容", "今天內容"].includes(text);
 }
 
 function isBindReminderMessage(text) {
@@ -447,24 +458,36 @@ async function handleTrelloReminder(range) {
 async function buildDailySummaryFlex() {
   const todayRange = getReminderRange("today");
   const weekRange = getReminderRange("week");
-  const [todayEvents, replyCards, todayCards, weekCards] = await Promise.all([
+  const [todayEvents, replyCards, todayCards, weekCards, contentPlan] = await Promise.all([
     buildCalendarEventsForRange(todayRange),
     getNewCollaborationCards(),
     buildReminderCardsForRange(todayRange),
     buildReminderCardsForRange(weekRange),
+    buildContentPlanForToday(todayRange),
   ]);
 
   return {
     type: "flex",
-    altText: "今日總結：行程、今日任務、本週任務",
+    altText: "今日總結：行程、任務、本週任務、拍攝靈感",
     contents: {
       type: "carousel",
       contents: [
         buildCalendarBubble("今日行程", todayEvents),
         buildTodayTaskBubble("今天任務", replyCards, todayCards),
         buildTaskSummaryBubble("本週任務", weekCards),
+        buildContentIdeasBubble(contentPlan),
       ],
     },
+  };
+}
+
+async function buildContentIdeasFlex() {
+  const contentPlan = await buildContentPlanForToday(getReminderRange("today"));
+
+  return {
+    type: "flex",
+    altText: "今日拍攝靈感",
+    contents: buildContentIdeasBubble(contentPlan),
   };
 }
 
@@ -498,6 +521,238 @@ async function buildCalendarEventsForRange(rangeInfo) {
     return [];
   }
 }
+
+async function buildContentPlanForToday(todayRange) {
+  const [events, weather] = await Promise.all([
+    buildCalendarEventsForRange(todayRange),
+    getTaipeiWeatherSummary(todayRange.start),
+  ]);
+  const signals = getContentSignals(events, weather);
+  const freeSlot = findBestContentFreeSlot(events, todayRange.start);
+  const ideas = pickContentIdeas(signals);
+
+  return {
+    weather,
+    freeSlot,
+    shootingMode: buildShootingMode(signals, freeSlot),
+    easyOption: buildEasyContentOption(signals),
+    ideas,
+  };
+}
+
+async function getTaipeiWeatherSummary(date = new Date()) {
+  const fallback = {
+    label: "看行程",
+    backgroundColor: "#F7F1E5",
+    accentColor: "#A16207",
+    summary: "天氣暫時抓不到，先用室內備案比較穩。",
+    isOutdoorFriendly: false,
+    isRainy: false,
+    isHot: false,
+  };
+
+  try {
+    const url = new URL("https://api.open-meteo.com/v1/forecast");
+    url.searchParams.set("latitude", "25.033");
+    url.searchParams.set("longitude", "121.5654");
+    url.searchParams.set("timezone", "Asia/Taipei");
+    url.searchParams.set("forecast_days", "1");
+    url.searchParams.set("hourly", "temperature_2m,precipitation_probability,weather_code");
+
+    const response = await fetch(url, { headers: { Accept: "application/json" } });
+    if (!response.ok) return fallback;
+
+    const data = await response.json();
+    const hours = data.hourly?.time || [];
+    const temps = data.hourly?.temperature_2m || [];
+    const rain = data.hourly?.precipitation_probability || [];
+    const codes = data.hourly?.weather_code || [];
+    const taipeiDay = formatDateKey(date);
+    const daytime = hours
+      .map((time, index) => ({ time, temp: temps[index], rain: rain[index], code: codes[index] }))
+      .filter((item) => item.time?.startsWith(taipeiDay) && /T(09|10|11|12|13|14|15|16|17|18)/.test(item.time));
+
+    if (daytime.length === 0) return fallback;
+
+    const maxRain = Math.max(...daytime.map((item) => Number(item.rain || 0)));
+    const maxTemp = Math.max(...daytime.map((item) => Number(item.temp || 0)));
+    const isRainy = maxRain >= 45 || daytime.some((item) => Number(item.code) >= 51 && Number(item.code) <= 67);
+    const isHot = maxTemp >= 31;
+    const label = isRainy ? "室內佳" : isHot ? "避中午" : "可外拍";
+
+    return {
+      label,
+      backgroundColor: isRainy ? "#EEF2FF" : isHot ? "#FFF7ED" : "#ECFDF5",
+      accentColor: isRainy ? "#4338CA" : isHot ? "#C2410C" : "#047857",
+      summary: `最高 ${Math.round(maxTemp)}°C，降雨機率 ${maxRain}%`,
+      isOutdoorFriendly: !isRainy && !isHot,
+      isRainy,
+      isHot,
+    };
+  } catch (error) {
+    console.error("Weather fetch failed:", error);
+    return fallback;
+  }
+}
+
+function getContentSignals(events, weather) {
+  const titleText = events.map((event) => event.title).join(" ");
+
+  return {
+    hasSport: /健身|皮拉|WEE|wee|跑|路跑|運動|體態/.test(titleText),
+    hasBeauty: /做臉|指甲|醫美|肉毒|體雕|剪|頭髮|美容|保養/.test(titleText),
+    hasWork: /上線|業配|交稿|提供|拍攝|出席|活動|會議|直播|品牌|brief/i.test(titleText),
+    hasDaily: /咖啡|畫畫|吃飯|午餐|晚餐|包粽子|登記|諮商|中醫|回診|牙醫|電影|生日/.test(titleText),
+    isIndoorDay: weather.isRainy || weather.isHot,
+    isOutdoorFriendly: weather.isOutdoorFriendly,
+    eventCount: events.length,
+  };
+}
+
+function findBestContentFreeSlot(events, date) {
+  const today = getTaipeiDateParts(date);
+  const windows = [
+    { label: "早上", startHour: 9, endHour: 12 },
+    { label: "下午", startHour: 13, endHour: 17 },
+    { label: "晚上", startHour: 19, endHour: 21 },
+  ];
+  const busy = events
+    .filter((event) => !isAllDayEvent(event))
+    .map((event) => ({
+      start: event.start.getTime(),
+      end: (event.end || new Date(event.start.getTime() + 60 * 60 * 1000)).getTime(),
+    }));
+
+  const scored = windows.map((window) => {
+    const start = taipeiDateToUtc(today.year, today.month, today.day, window.startHour).getTime();
+    const end = taipeiDateToUtc(today.year, today.month, today.day, window.endHour).getTime();
+    const hasConflict = busy.some((item) => item.start < end && item.end > start);
+    return {
+      ...window,
+      hasConflict,
+      label: hasConflict ? `${window.label}零碎` : `${window.label}可拍`,
+      score: (window.endHour - window.startHour) - (hasConflict ? 3 : 0),
+    };
+  }).sort((a, b) => b.score - a.score);
+
+  const best = scored[0];
+  return {
+    label: best.label,
+    detail: `${String(best.startHour).padStart(2, "0")}:00-${String(best.endHour).padStart(2, "0")}:00`,
+    isClean: !best.hasConflict,
+  };
+}
+
+function buildShootingMode(signals, freeSlot) {
+  const place = signals.isIndoorDay ? "室內拍攝優先" : "可安排室外或半戶外";
+  const pace = freeSlot.isClean ? "可以拍一支完整 Reels" : "適合拍輕量素材和 Plog";
+  return `${place}，${freeSlot.detail} ${pace}`;
+}
+
+function buildEasyContentOption(signals) {
+  if (signals.hasSport) return "運動後 6 張 Plog、健身包裡有什麼、流汗後快速整理";
+  if (signals.hasBeauty) return "變漂亮流程 Plog、拍攝前保養、今日妝容近拍";
+  if (signals.hasDaily) return "咖啡廳工作 Plog、今日小狀態、生活感穿搭";
+  return "GRWM、今天包包內容物、自由工作者的一小時";
+}
+
+function pickContentIdeas(signals) {
+  const pool = [];
+
+  if (signals.hasWork) pool.push(...CONTENT_IDEAS.work);
+  if (signals.hasSport) pool.push(...CONTENT_IDEAS.sport);
+  if (signals.hasBeauty) pool.push(...CONTENT_IDEAS.beauty);
+  if (signals.hasDaily) pool.push(...CONTENT_IDEAS.daily);
+  if (signals.isIndoorDay) pool.push(...CONTENT_IDEAS.indoor);
+  if (signals.isOutdoorFriendly) pool.push(...CONTENT_IDEAS.outdoor);
+
+  pool.push(...CONTENT_IDEAS.evergreen);
+
+  const unique = [];
+  for (const idea of pool) {
+    if (!unique.some((item) => item.title === idea.title)) unique.push(idea);
+    if (unique.length >= 3) break;
+  }
+
+  return unique;
+}
+
+const CONTENT_IDEAS = {
+  work: [
+    {
+      title: "KOL 拍攝前我會先做的 3 件小事",
+      hook: "我以前以為拍業配就是把產品拍美，後來發現真正影響質感的是拍之前的準備。",
+      shots: ["打開 brief", "整理桌面", "補妝近拍", "架手機", "拍完檢查素材"],
+    },
+    {
+      title: "自由工作者今天不焦慮的工作節奏",
+      hook: "接案最難的不是忙，是你要在很亂的行程裡，把自己穩住。",
+      shots: ["今日行程截圖", "咖啡", "筆記本", "對鏡頭一句話", "收工畫面"],
+    },
+  ],
+  sport: [
+    {
+      title: "女生練體態，不是為了變瘦而已",
+      hook: "我以前也很在意體重，後來才發現體態變順，整個人的氣場會不一樣。",
+      shots: ["綁頭髮", "熱身", "訓練側拍", "流汗近拍", "回家整理"],
+    },
+    {
+      title: "不想動的日子，我怎麼讓自己先出門",
+      hook: "今天不是很有動力，但我發現只要先換好衣服，事情就完成一半了。",
+      shots: ["換運動服", "出門鞋", "路上空景", "第一組動作", "結尾自拍"],
+    },
+  ],
+  beauty: [
+    {
+      title: "拍攝前把自己照顧回來的流程",
+      hook: "我不是每天都很精緻，但要拍東西之前，我會用這幾步把狀態拉回來。",
+      shots: ["洗臉或保養", "整理頭髮", "底妝近拍", "香氛或指甲", "完成妝容"],
+    },
+    {
+      title: "變漂亮不是焦慮，是把自己放回第一順位",
+      hook: "以前我會覺得保養很麻煩，現在覺得那是提醒自己慢下來的一個方式。",
+      shots: ["保養品", "鏡子前", "手部細節", "穿搭細節", "出門前一秒"],
+    },
+  ],
+  daily: [
+    {
+      title: "今天只有一小時，也可以拍出生活感",
+      hook: "我以前很怕日常太無聊，後來發現重點不是行程，是你想說的那個觀點。",
+      shots: ["走路空景", "咖啡", "桌面", "手寫字", "回家路上"],
+    },
+    {
+      title: "自由工作者的普通一天，其實也需要被好好安排",
+      hook: "沒有打卡下班之後，我才知道自己的時間更需要被保護。",
+      shots: ["行事曆", "電腦", "飲料", "手機訊息", "晚上收工"],
+    },
+  ],
+  indoor: [
+    {
+      title: "下雨天室內也能拍的 5 個素材",
+      hook: "今天不適合外拍沒關係，室內反而很適合拍一點更貼近生活的東西。",
+      shots: ["窗邊光", "梳妝台", "衣櫃", "咖啡杯", "手部近景"],
+    },
+  ],
+  outdoor: [
+    {
+      title: "好天氣不要只拍風景，要拍出妳的狀態",
+      hook: "如果今天有一點陽光，我會想拍的不是漂亮而已，是那種走出去後人變亮的感覺。",
+      shots: ["走路背影", "陽光側臉", "穿搭全身", "街邊咖啡", "回頭笑"],
+    },
+  ],
+  evergreen: [
+    {
+      title: "最近讓我比較有精神的 3 個小習慣",
+      hook: "不是那種很厲害的自律，只是幾個真的有讓我比較回到狀態的小事。",
+      shots: ["喝水", "整理包包", "運動鞋", "保養", "睡前畫面"],
+    },
+    {
+      title: "30 歲前後，我對自信的理解變了",
+      hook: "以前覺得自信是看起來很完美，現在覺得是我知道自己在照顧自己。",
+      shots: ["對鏡自拍", "日常走路", "工作畫面", "保養細節", "自然笑"],
+    },
+  ],
+};
 
 function buildTaskSummaryFlex(label, cards) {
   return {
@@ -778,6 +1033,66 @@ function buildCalendarBubble(title, events) {
       ]).filter(Boolean),
     },
   };
+}
+
+function buildContentIdeasBubble(plan) {
+  const contents = [
+    {
+      type: "box",
+      layout: "horizontal",
+      spacing: "sm",
+      contents: [
+        buildMiniMetric("天氣", plan.weather.label, plan.weather.backgroundColor, plan.weather.accentColor),
+        buildMiniMetric("空檔", plan.freeSlot.label, "#F5F3FF", "#6D28D9"),
+      ],
+    },
+    buildInfoLine("拍攝建議", plan.shootingMode),
+    buildInfoLine("輕鬆備案", plan.easyOption),
+    buildSectionTitle("今日 3 個主題"),
+    ...plan.ideas.flatMap((idea, index) => buildContentIdeaRows(idea, index)),
+  ];
+
+  return buildBaseBubble("fanfan Reels", "今日拍攝靈感", contents);
+}
+
+function buildContentIdeaRows(idea, index) {
+  return [
+    {
+      type: "separator",
+      margin: index === 0 ? "md" : "lg",
+    },
+    {
+      type: "box",
+      layout: "vertical",
+      margin: "md",
+      contents: [
+        {
+          type: "text",
+          text: `${index + 1}. ${idea.title}`,
+          color: "#111827",
+          size: "sm",
+          weight: "bold",
+          wrap: true,
+        },
+        {
+          type: "text",
+          text: `Hook：${idea.hook}`,
+          color: "#374151",
+          size: "xs",
+          margin: "xs",
+          wrap: true,
+        },
+        {
+          type: "text",
+          text: `畫面：${idea.shots.join("、")}`,
+          color: "#6B7280",
+          size: "xs",
+          margin: "xs",
+          wrap: true,
+        },
+      ],
+    },
+  ];
 }
 
 function buildMiniMetric(label, value, backgroundColor, accentColor) {
@@ -1291,18 +1606,12 @@ function getReminderRange(range) {
 }
 
 function getTaipeiToday() {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Taipei",
-    year: "numeric",
-    month: "numeric",
-    day: "numeric",
-  }).formatToParts(new Date());
+  return getTaipeiDateParts(new Date());
+}
 
-  return {
-    year: Number(parts.find((part) => part.type === "year").value),
-    month: Number(parts.find((part) => part.type === "month").value),
-    day: Number(parts.find((part) => part.type === "day").value),
-  };
+function formatDateKey(date) {
+  const { year, month, day } = getTaipeiDateParts(date);
+  return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 }
 
 function getGoogleRedirectUri() {
