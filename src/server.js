@@ -147,8 +147,7 @@ app.get("/push/tomorrow", async (req, res) => {
   }
 
   try {
-    const range = getReminderRange("tomorrow");
-    const message = await buildCalendarFlex("明日行程", range);
+    const message = await buildTomorrowSummaryFlex();
     await lineClient.pushMessage(LINE_TARGET_USER_ID, message);
     res.status(200).json({ ok: true });
   } catch (error) {
@@ -251,7 +250,13 @@ async function handleEvent(event) {
   }
 
   if (isContentIdeasMessage(userText)) {
-    const reply = await buildContentIdeasFlex();
+    const reply = await buildContentIdeasFlex("today");
+    await replyMessage(event.replyToken, reply);
+    return;
+  }
+
+  if (isTomorrowContentIdeasMessage(userText)) {
+    const reply = await buildContentIdeasFlex("tomorrow");
     await replyMessage(event.replyToken, reply);
     return;
   }
@@ -330,6 +335,7 @@ function buildHelpMessage() {
     "下週行程：看下週 Google 行事曆",
     "今日總結：三張卡片總結今日行程、今日任務、本週任務",
     "今天拍什麼：依照行程和天氣給今日拍攝靈感",
+    "明天拍什麼：依照明天行程和天氣給明日拍攝靈感",
     "綁定提醒：取得每天 9 點推播需要的 LINE userId",
     "待辦：明天整理品牌報價",
     "提醒：下週三 14:00 回覆合作信",
@@ -385,6 +391,10 @@ function isDailySummaryMessage(text) {
 
 function isContentIdeasMessage(text) {
   return ["今天拍什麼", "今日拍攝靈感", "拍攝靈感", "今日內容", "今天內容"].includes(text);
+}
+
+function isTomorrowContentIdeasMessage(text) {
+  return ["明天拍什麼", "明日拍攝靈感", "明天拍攝靈感", "明日內容", "明天內容"].includes(text);
 }
 
 function isBindReminderMessage(text) {
@@ -471,7 +481,7 @@ async function buildDailySummaryFlex() {
     getNewCollaborationCards(),
     buildReminderCardsForRange(todayRange),
     buildReminderCardsForRange(weekRange),
-    buildContentPlanForToday(todayRange),
+    buildContentPlanForRange(todayRange),
   ]);
 
   return {
@@ -483,19 +493,41 @@ async function buildDailySummaryFlex() {
         buildCalendarBubble("今日行程", todayEvents),
         buildTodayTaskBubble("今天任務", replyCards, todayCards),
         buildTaskSummaryBubble("本週任務", weekCards),
-        buildContentIdeasBubble(contentPlan),
+        buildContentIdeasBubble(contentPlan, "今日拍攝靈感", "今日"),
       ],
     },
   };
 }
 
-async function buildContentIdeasFlex() {
-  const contentPlan = await buildContentPlanForToday(getReminderRange("today"));
+async function buildTomorrowSummaryFlex() {
+  const tomorrowRange = getReminderRange("tomorrow");
+  const [tomorrowEvents, contentPlan] = await Promise.all([
+    buildCalendarEventsForRange(tomorrowRange),
+    buildContentPlanForRange(tomorrowRange),
+  ]);
 
   return {
     type: "flex",
-    altText: "今日拍攝靈感",
-    contents: buildContentIdeasBubble(contentPlan),
+    altText: "明日預告：行程、拍攝靈感",
+    contents: {
+      type: "carousel",
+      contents: [
+        buildCalendarBubble("明日行程", tomorrowEvents),
+        buildContentIdeasBubble(contentPlan, "明日拍攝靈感", "明日"),
+      ],
+    },
+  };
+}
+
+async function buildContentIdeasFlex(range = "today") {
+  const rangeInfo = getReminderRange(range);
+  const label = range === "tomorrow" ? "明日" : "今日";
+  const contentPlan = await buildContentPlanForRange(rangeInfo);
+
+  return {
+    type: "flex",
+    altText: `${label}拍攝靈感`,
+    contents: buildContentIdeasBubble(contentPlan, `${label}拍攝靈感`, label),
   };
 }
 
@@ -530,14 +562,14 @@ async function buildCalendarEventsForRange(rangeInfo) {
   }
 }
 
-async function buildContentPlanForToday(todayRange) {
+async function buildContentPlanForRange(rangeInfo) {
   const [events, weather, libraryIdeas] = await Promise.all([
-    buildCalendarEventsForRange(todayRange),
-    getTaipeiWeatherSummary(todayRange.start),
+    buildCalendarEventsForRange(rangeInfo),
+    getTaipeiWeatherSummary(rangeInfo.start),
     getContentLibraryIdeas({ limit: 4 }),
   ]);
   const signals = getContentSignals(events, weather);
-  const freeSlot = findBestContentFreeSlot(events, todayRange.start);
+  const freeSlot = findBestContentFreeSlot(events, rangeInfo.start);
   const ideas = pickContentIdeas(signals, libraryIdeas);
 
   return {
@@ -1111,7 +1143,7 @@ function buildCalendarBubble(title, events) {
   };
 }
 
-function buildContentIdeasBubble(plan) {
+function buildContentIdeasBubble(plan, title = "今日拍攝靈感", label = "今日") {
   const contents = [
     {
       type: "box",
@@ -1128,13 +1160,13 @@ function buildContentIdeasBubble(plan) {
       ? buildInfoLine("靈感庫", `已參考經紀人資料 ${plan.libraryCount} 則`)
       : undefined,
     buildInfoLine("限動方向", plan.storyPlan.summary),
-    buildSectionTitle("今日限動順序"),
+    buildSectionTitle(`${label}限動順序`),
     ...plan.storyPlan.frames.flatMap((frame, index) => buildStoryFrameRows(frame, index)),
-    buildSectionTitle("今日 3 個主題"),
+    buildSectionTitle(`${label} 3 個主題`),
     ...plan.ideas.flatMap((idea, index) => buildContentIdeaRows(idea, index)),
   ].filter(Boolean);
 
-  return buildBaseBubble("fanfan Reels", "今日拍攝靈感", contents);
+  return buildBaseBubble("fanfan Reels", title, contents);
 }
 
 function buildStoryFrameRows(frame, index) {
