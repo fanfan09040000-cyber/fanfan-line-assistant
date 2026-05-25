@@ -1672,8 +1672,15 @@ async function getNewCollaborationCards() {
 function isNewCollaborationPlaceholderCard(card) {
   const name = (card.name || "").trim();
   const desc = (card.desc || "").trim();
+  const normalizedName = name
+    .replace(/[＿－—–-]/g, "_")
+    .replace(/[／/|｜]/g, "_")
+    .replace(/\s+/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/[。．.、，,：:；;）)】\]》>]+$/g, "");
 
-  return /(?:^|[_｜|／/\s])品牌$/.test(name) ||
+  return /(?:^|_)品牌$/.test(normalizedName) ||
+    /(?:^|_)品牌(?:名稱|名)?(?:待填|未填|待補|空白)?$/.test(normalizedName) ||
     /範本|模板|這張卡片是範本/.test(`${name}\n${desc}`);
 }
 
