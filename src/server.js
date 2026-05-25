@@ -1665,7 +1665,16 @@ async function getNewCollaborationCards() {
 
   return openCards
     .filter((card) => card.idList === targetLists.newCollaboration)
+    .filter((card) => !isNewCollaborationPlaceholderCard(card))
     .sort((a, b) => new Date(b.dateLastActivity).getTime() - new Date(a.dateLastActivity).getTime());
+}
+
+function isNewCollaborationPlaceholderCard(card) {
+  const name = (card.name || "").trim();
+  const desc = (card.desc || "").trim();
+
+  return /(?:^|[_｜|／/\s])品牌$/.test(name) ||
+    /範本|模板|這張卡片是範本/.test(`${name}\n${desc}`);
 }
 
 async function getTargetListIds() {
