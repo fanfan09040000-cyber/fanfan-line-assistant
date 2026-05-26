@@ -2,6 +2,7 @@ name: Daily LINE Summary
 
 on:
   schedule:
+    # GitHub cron uses UTC. These are Asia/Taipei 09:10 and 22:10.
     - cron: "10 1 * * *"
     - cron: "10 14 * * *"
   workflow_dispatch:
