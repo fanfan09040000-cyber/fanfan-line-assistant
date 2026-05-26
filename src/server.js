@@ -577,7 +577,7 @@ async function buildContentPlanForRange(rangeInfo) {
     freeSlot,
     shootingMode: buildShootingMode(signals, freeSlot),
     easyOption: buildEasyContentOption(signals),
-    storyPlan: buildStoryPlan(events, signals),
+    storyPlan: buildStoryPlan(events, signals, rangeInfo.start),
     libraryEnabled: isContentLibraryConfigured(),
     libraryCount: libraryIdeas.length,
     ideas,
@@ -700,11 +700,13 @@ function buildEasyContentOption(signals) {
   return "GRWM、今天包包內容物、自由工作者的一小時";
 }
 
-function buildStoryPlan(events, signals) {
+function buildStoryPlan(events, signals, date = new Date()) {
+  const weeklyTheme = getWeeklyStoryTheme(date);
   const visibleEvents = events
-    .filter((event) => !/上線|業配上線|交稿|提供/.test(event.title))
+    .filter(isStoryFriendlyEvent)
     .slice(0, 3);
-  const anchor = visibleEvents[0]?.title || "今天的生活節奏";
+  const anchor = visibleEvents[0]?.title || weeklyTheme.primary;
+  const leadMode = visibleEvents.length > 0 ? "行程優先" : "主題補內容";
   const mood = signals.hasWork
     ? "工作感但不要太硬"
     : signals.hasSport
@@ -716,12 +718,16 @@ function buildStoryPlan(events, signals) {
   const frames = [
     {
       title: "開場",
-      text: `今天行程：${truncate(anchor, 18)}`,
-      shot: "行事曆截圖或出門前鏡子照",
+      text: visibleEvents.length > 0
+        ? `今天行程：${truncate(anchor, 18)}`
+        : `今天主題：${truncate(weeklyTheme.primary, 18)}`,
+      shot: visibleEvents.length > 0 ? "出門前鏡子照或行程路上畫面" : weeklyTheme.openingShot,
     },
     {
       title: "過程",
-      text: signals.hasSport
+      text: visibleEvents.length > 0
+        ? "行程中只抓一個漂亮片段就好"
+        : signals.hasSport
         ? "讓自己先出門就贏一半"
         : signals.hasBeauty
           ? "把狀態慢慢整理回來"
@@ -732,16 +738,105 @@ function buildStoryPlan(events, signals) {
     },
     {
       title: "收尾",
-      text: "今天的小進度也算數",
-      shot: "回家路上、收工桌面或自拍一張",
+      text: weeklyTheme.closing,
+      shot: weeklyTheme.closingShot,
     },
   ];
 
   return {
-    summary: `${mood}，用 3 張限動串成今日感。`,
+    mode: leadMode,
+    weeklyTheme,
+    summary: `${leadMode}，${mood}，今天主軸：${weeklyTheme.primary}。`,
     frames,
   };
 }
+
+function isStoryFriendlyEvent(event) {
+  const title = event.title || "";
+
+  if (/上線|業配上線|交稿|提供|brief|合約|報價|付款|醫生|諮商|中醫|回診|牙醫|登記|會議|面談|私人|家人|地址|不公開|保密/i.test(title)) {
+    return false;
+  }
+
+  if (/吃飯|午餐|晚餐|拿|取|買|繳費|雜事|處理|行政/.test(title)) {
+    return false;
+  }
+
+  return /活動|出席|運動|健身|跑|皮拉|WEE|旅行|戶外|朋友|聚會|咖啡|拍攝|穿搭|做臉|指甲|頭髮|美容|保養|課程/.test(title);
+}
+
+function getWeeklyStoryTheme(date) {
+  const weekday = getTaipeiWeekdayIndex(date);
+  const base = WEEKLY_STORY_THEMES[weekday] || WEEKLY_STORY_THEMES[1];
+  const cadence = getStoryCadence(date);
+
+  return {
+    ...base,
+    cadence,
+    primary: cadence ? `${base.primary}＋${cadence}` : base.primary,
+  };
+}
+
+function getStoryCadence(date) {
+  const { month, day } = getTaipeiDateParts(date);
+  const weekNumber = Math.ceil(day / 7);
+  const weekday = getTaipeiWeekdayIndex(date);
+
+  if (weekday === 7 && month % 2 === 0 && weekNumber === 1) {
+    return "QA 互動";
+  }
+
+  if (weekNumber % 2 === 0 && [2, 5, 7].includes(weekday)) {
+    return "公關品互動";
+  }
+
+  return "";
+}
+
+const WEEKLY_STORY_THEMES = {
+  1: {
+    primary: "本週行程／身體狀態／運動安排",
+    openingShot: "行事曆、運動鞋、身體狀態自拍",
+    closing: "問大家這週想先看哪一類內容",
+    closingShot: "投票：運動 / 美妝 / 日常",
+  },
+  2: {
+    primary: "保養／妝容／拍攝前準備",
+    openingShot: "保養品、化妝桌、素顏到完妝前後",
+    closing: "收一個今天最有感的小準備",
+    closingShot: "近拍妝感、桌面收尾、問題貼紙",
+  },
+  3: {
+    primary: "健身／跑步／體態觀察／考教練日常",
+    openingShot: "運動服、課表、訓練前自拍",
+    closing: "記錄今天身體哪裡比較有感",
+    closingShot: "課後流汗自拍或小心得",
+  },
+  4: {
+    primary: "穿搭／配件／包包小物／出門準備",
+    openingShot: "穿搭鏡子照、包包內容物、配件近拍",
+    closing: "讓大家選今天最喜歡哪個小物",
+    closingShot: "投票：包包 / 鞋 / 飾品",
+  },
+  5: {
+    primary: "本週生活碎片／姐妹聊天／心情閒聊",
+    openingShot: "咖啡、路上空景、自拍一句話",
+    closing: "用一句話收這週心情",
+    closingShot: "小盒子或留言互動",
+  },
+  6: {
+    primary: "出門／戶外／朋友聚會／旅遊日常",
+    openingShot: "出門穿搭、街景、朋友聚會前一刻",
+    closing: "整理一張今天最喜歡的畫面",
+    closingShot: "風景、合照、回家路上",
+  },
+  7: {
+    primary: "整理房間／備品補貨／下週工作準備／QA 互動",
+    openingShot: "桌面整理、補貨、下週待辦",
+    closing: "預告下週重點或開 QA",
+    closingShot: "QA 貼紙、下週清單、補貨戰利品",
+  },
+};
 
 function pickStoryMiddleShot(signals) {
   if (signals.hasSport) return "運動鞋、流汗、器材、課後整理";
@@ -1159,6 +1254,8 @@ function buildContentIdeasBubble(plan, title = "今日拍攝靈感", label = "�
     plan.libraryCount > 0
       ? buildInfoLine("靈感庫", `已參考經紀人資料 ${plan.libraryCount} 則`)
       : undefined,
+    buildInfoLine("限動主題", plan.storyPlan.weeklyTheme.primary),
+    buildInfoLine("限動來源", plan.storyPlan.mode),
     buildInfoLine("限動方向", plan.storyPlan.summary),
     buildSectionTitle(`${label}限動順序`),
     ...plan.storyPlan.frames.flatMap((frame, index) => buildStoryFrameRows(frame, index)),
@@ -1939,6 +2036,23 @@ function getTaipeiDateParts(date) {
     month: Number(parts.find((part) => part.type === "month").value),
     day: Number(parts.find((part) => part.type === "day").value),
   };
+}
+
+function getTaipeiWeekdayIndex(date) {
+  const weekday = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Taipei",
+    weekday: "short",
+  }).format(date);
+
+  return {
+    Mon: 1,
+    Tue: 2,
+    Wed: 3,
+    Thu: 4,
+    Fri: 5,
+    Sat: 6,
+    Sun: 7,
+  }[weekday] || 1;
 }
 
 function formatLatestComments(comments = []) {
