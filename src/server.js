@@ -742,11 +742,16 @@ function buildStoryPlan(events, signals, date = new Date()) {
       shot: weeklyTheme.closingShot,
     },
   ];
+  const storySuggestion = visibleEvents.length > 0
+    ? `先用「${truncate(anchor, 18)}」當今天限動主線，再補一則${weeklyTheme.primary}。`
+    : `今天沒有適合公開的行程，直接走${weeklyTheme.primary}。`;
 
   return {
     mode: leadMode,
     weeklyTheme,
-    summary: `${leadMode}，${mood}，今天主軸：${weeklyTheme.primary}。`,
+    suggestion: storySuggestion,
+    interaction: weeklyTheme.interaction,
+    summary: `${leadMode}，${mood}，${storySuggestion}`,
     frames,
   };
 }
@@ -797,42 +802,56 @@ const WEEKLY_STORY_THEMES = {
   1: {
     primary: "本週行程／身體狀態／運動安排",
     openingShot: "行事曆、運動鞋、身體狀態自拍",
+    suggestion: "整理這週 2-3 個重點行程，順便講今天身體狀態和運動安排。",
+    interaction: "投票：這週想看運動 / 美妝 / 日常",
     closing: "問大家這週想先看哪一類內容",
     closingShot: "投票：運動 / 美妝 / 日常",
   },
   2: {
     primary: "保養／妝容／拍攝前準備",
     openingShot: "保養品、化妝桌、素顏到完妝前後",
+    suggestion: "拍一組拍攝前準備：保養、妝容細節、今天想讓狀態變好的小步驟。",
+    interaction: "提問：想看妝容細節還是保養流程",
     closing: "收一個今天最有感的小準備",
     closingShot: "近拍妝感、桌面收尾、問題貼紙",
   },
   3: {
     primary: "健身／跑步／體態觀察／考教練日常",
     openingShot: "運動服、課表、訓練前自拍",
+    suggestion: "記錄今天的訓練或體態觀察，用一張圖講最近身體最有感的改變。",
+    interaction: "投票：今天練上半身 / 下半身 / 有氧",
     closing: "記錄今天身體哪裡比較有感",
     closingShot: "課後流汗自拍或小心得",
   },
   4: {
     primary: "穿搭／配件／包包小物／出門準備",
     openingShot: "穿搭鏡子照、包包內容物、配件近拍",
+    suggestion: "用出門前 3 張圖整理今天穿搭、配件或包包小物。",
+    interaction: "投票：包包 / 鞋 / 飾品哪個最加分",
     closing: "讓大家選今天最喜歡哪個小物",
     closingShot: "投票：包包 / 鞋 / 飾品",
   },
   5: {
     primary: "本週生活碎片／姐妹聊天／心情閒聊",
     openingShot: "咖啡、路上空景、自拍一句話",
+    suggestion: "發本週生活碎片，搭配一段像跟姐妹聊天的心情閒聊。",
+    interaction: "小盒子：這週你們過得如何",
     closing: "用一句話收這週心情",
     closingShot: "小盒子或留言互動",
   },
   6: {
     primary: "出門／戶外／朋友聚會／旅遊日常",
     openingShot: "出門穿搭、街景、朋友聚會前一刻",
+    suggestion: "如果有出門就發路上、穿搭、聚會片段；沒出門就發週末生活感。",
+    interaction: "投票：週末想出門還是在家充電",
     closing: "整理一張今天最喜歡的畫面",
     closingShot: "風景、合照、回家路上",
   },
   7: {
     primary: "整理房間／備品補貨／下週工作準備／QA 互動",
     openingShot: "桌面整理、補貨、下週待辦",
+    suggestion: "拍整理房間、備品補貨或下週準備，讓限動有收心感。",
+    interaction: "QA 或小盒子：下週想問我什麼",
     closing: "預告下週重點或開 QA",
     closingShot: "QA 貼紙、下週清單、補貨戰利品",
   },
@@ -1256,51 +1275,16 @@ function buildContentIdeasBubble(plan, title = "今日拍攝靈感", label = "�
       : undefined,
     buildInfoLine("限動主題", plan.storyPlan.weeklyTheme.primary),
     buildInfoLine("限動來源", plan.storyPlan.mode),
-    buildInfoLine("限動方向", plan.storyPlan.summary),
-    buildSectionTitle("限動排程原則"),
-    ...buildStoryPrincipleRows(plan.storyPlan.weeklyTheme.cadence),
+    buildInfoLine("限動建議", plan.storyPlan.suggestion),
+    buildInfoLine("互動設計", plan.storyPlan.interaction),
+    plan.storyPlan.weeklyTheme.cadence
+      ? buildInfoLine("固定互動", plan.storyPlan.weeklyTheme.cadence)
+      : undefined,
     buildSectionTitle(`${label} 3 個主題`),
     ...plan.ideas.flatMap((idea, index) => buildContentIdeaRows(idea, index)),
   ].filter(Boolean);
 
   return buildBaseBubble("fanfan Reels", title, contents);
-}
-
-function buildStoryPrincipleRows(cadence) {
-  const principles = [
-    "有行程先發行程，沒行程再用當天主題補內容。",
-    "太私密、合作保密、畫面太碎或狀態不想被打擾，就不要即時發。",
-    "每兩週安排一次公關品互動，每兩個月安排一次 QA。",
-  ];
-
-  if (cadence) {
-    principles.push(`本次固定互動：${cadence}`);
-  }
-
-  return principles.map((text, index) => ({
-    type: "box",
-    layout: "baseline",
-    spacing: "sm",
-    margin: index === 0 ? "md" : "sm",
-    contents: [
-      {
-        type: "text",
-        text: `${index + 1}.`,
-        color: "#A16207",
-        size: "xs",
-        weight: "bold",
-        flex: 0,
-      },
-      {
-        type: "text",
-        text,
-        color: "#374151",
-        size: "xs",
-        wrap: true,
-        flex: 1,
-      },
-    ],
-  }));
 }
 
 function buildStoryFrameRows(frame, index) {
