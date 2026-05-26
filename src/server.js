@@ -1257,13 +1257,50 @@ function buildContentIdeasBubble(plan, title = "今日拍攝靈感", label = "�
     buildInfoLine("限動主題", plan.storyPlan.weeklyTheme.primary),
     buildInfoLine("限動來源", plan.storyPlan.mode),
     buildInfoLine("限動方向", plan.storyPlan.summary),
-    buildSectionTitle(`${label}限動順序`),
-    ...plan.storyPlan.frames.flatMap((frame, index) => buildStoryFrameRows(frame, index)),
+    buildSectionTitle("限動排程原則"),
+    ...buildStoryPrincipleRows(plan.storyPlan.weeklyTheme.cadence),
     buildSectionTitle(`${label} 3 個主題`),
     ...plan.ideas.flatMap((idea, index) => buildContentIdeaRows(idea, index)),
   ].filter(Boolean);
 
   return buildBaseBubble("fanfan Reels", title, contents);
+}
+
+function buildStoryPrincipleRows(cadence) {
+  const principles = [
+    "有行程先發行程，沒行程再用當天主題補內容。",
+    "太私密、合作保密、畫面太碎或狀態不想被打擾，就不要即時發。",
+    "每兩週安排一次公關品互動，每兩個月安排一次 QA。",
+  ];
+
+  if (cadence) {
+    principles.push(`本次固定互動：${cadence}`);
+  }
+
+  return principles.map((text, index) => ({
+    type: "box",
+    layout: "baseline",
+    spacing: "sm",
+    margin: index === 0 ? "md" : "sm",
+    contents: [
+      {
+        type: "text",
+        text: `${index + 1}.`,
+        color: "#A16207",
+        size: "xs",
+        weight: "bold",
+        flex: 0,
+      },
+      {
+        type: "text",
+        text,
+        color: "#374151",
+        size: "xs",
+        wrap: true,
+        flex: 1,
+      },
+    ],
+  }));
 }
 
 function buildStoryFrameRows(frame, index) {
